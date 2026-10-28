@@ -32,7 +32,10 @@ export interface FieldProperty {
   [key: string]: unknown;
 }
 
-/** AI に返す 1 項目 1 行の要約 */
+/**
+ * AI に返す 1 項目 1 行の要約。**値の出どころ**も付ける（kSQL の `ksql_describe_app` を参考に。
+ * SQL で書ける項目かが分かるようにするため）
+ */
 export interface FieldSummary {
   code: string;
   type: string;
@@ -41,7 +44,30 @@ export interface FieldSummary {
   unique?: boolean;
   /** テーブルの子のとき、その親のコード */
   table?: string;
+  /** **SQL で書けない**項目（自動の項目・計算・ルックアップのコピー先）。理由は `readOnly` */
+  writable?: false;
+  /** 書けない理由（`auto` = kintone が決める / `calc` = 計算 / `lookupCopy` = ルックアップのコピー先） */
+  readOnly?: "auto" | "calc" | "lookupCopy";
+  /** ルックアップの項目（キーを入れると関連する値が写る） */
+  lookup?: true;
 }
+
+/** 一覧で集めるアプリの上限（大きなドメインで延々と読まない。超えたら「続きがある」と伝える） */
+const MAX_APPS = 500;
+
+/** kintone が値を決める項目（SQL の `SET` に書けない） */
+const AUTO_TYPES = new Set([
+  "RECORD_NUMBER",
+  "CREATED_TIME",
+  "UPDATED_TIME",
+  "CREATOR",
+  "MODIFIER",
+  "STATUS",
+  "STATUS_ASSIGNEE",
+  "CATEGORY",
+  "__ID__",
+  "__REVISION__",
+]);
 
 /** `fields/<profile>/APP<番号>.json` の形 */
 export interface FieldsFile {
@@ -161,17 +187,53 @@ export function connectionReport(opt: KintoneOptions = {}): { report: Connection
   }
 }
 
-/** テーブルの子も含めて 1 項目 1 行に（値は無い） */
+/** ルックアップのコピー先（ほかの項目の `lookup.fieldMappings[].field`）を集める。テーブルの中も見る */
+function lookupCopyTargets(properties: Record<string, FieldProperty>): Set<string> {
+  const out = new Set<string>();
+  const scan = (props: Record<string, FieldProperty>): void => {
+    for (const p of Object.values(props)) {
+      const lookup = p.lookup as { fieldMappings?: Array<{ field?: unknown }> } | undefined;
+      for (const m of lookup?.fieldMappings ?? []) if (typeof m.field === "string") out.add(m.field);
+      if (p.type === "SUBTABLE" && p.fields) scan(p.fields);
+    }
+  };
+  scan(properties);
+  return out;
+}
+
+/** 1 項目分の要約（値の出どころの印つき） */
+function summarizeOne(code: string, p: FieldProperty, copyTargets: Set<string>, table?: string): FieldSummary {
+  const type = String(p.type ?? "");
+  const readOnly: FieldSummary["readOnly"] | undefined = AUTO_TYPES.has(type)
+    ? "auto"
+    : type === "CALC"
+      ? "calc"
+      : copyTargets.has(code)
+        ? "lookupCopy"
+        : undefined;
+  return {
+    code,
+    type,
+    label: String(p.label ?? ""),
+    ...(p.unique ? { unique: true } : {}),
+    ...(table ? { table } : {}),
+    ...(p.lookup ? { lookup: true as const } : {}),
+    ...(readOnly ? { writable: false as const, readOnly } : {}),
+  };
+}
+
+/**
+ * テーブルの子も含めて 1 項目 1 行に（値は無い）。**値の出どころ**も付ける
+ * （kSQL の `ksql_describe_app` を参考に。SQL の `SET` に書ける項目かが分かるようにするため）
+ */
 export function summarizeFields(properties: Record<string, FieldProperty>): FieldSummary[] {
+  const copyTargets = lookupCopyTargets(properties);
   const out: FieldSummary[] = [];
   for (const code of Object.keys(properties).sort()) {
     const p = properties[code]!;
-    out.push({ code, type: String(p.type ?? ""), label: String(p.label ?? ""), ...(p.unique ? { unique: true } : {}) });
+    out.push(summarizeOne(code, p, copyTargets));
     if (p.type === "SUBTABLE" && p.fields) {
-      for (const child of Object.keys(p.fields).sort()) {
-        const c = p.fields[child]!;
-        out.push({ code: child, type: String(c.type ?? ""), label: String(c.label ?? ""), ...(c.unique ? { unique: true } : {}), table: code });
-      }
+      for (const child of Object.keys(p.fields).sort()) out.push(summarizeOne(child, p.fields[child]!, copyTargets, code));
     }
   }
   return out;
@@ -292,9 +354,11 @@ export async function fetchFields(input: { app: number; profile?: string; previe
 
 /**
  * アプリの一覧（`kact_apps`）。**ログイン名とパスワードの接続でだけ**使える
- * （API トークンはアプリごとの鍵なので、アプリの一覧は読めない）
+ * （API トークンはアプリごとの鍵なので、アプリの一覧は読めない）。
+ * kintone は**1 回に 100 件まで**しか返さないので、**名前で絞る**（`name`。部分一致）か `offset` で続きを読む
+ * （2026-10-28 の実機確認で、番号の大きいアプリが先頭 100 件に入らず見つからなかった）
  */
-export async function listApps(input: { profile?: string; limit?: number } = {}, opt: KintoneOptions = {}): Promise<AppsResult> {
+export async function listApps(input: { profile?: string; limit?: number; name?: string; offset?: number } = {}, opt: KintoneOptions = {}): Promise<AppsResult> {
   let conn: { set: ConnectionSet; def: ProfileDef };
   try {
     conn = connectionFor(input.profile, opt);
@@ -318,20 +382,44 @@ export async function listApps(input: { profile?: string; limit?: number } = {},
   }
   try {
     const client = createRestClient(authFor(set, def, 0), opt.fetchImpl);
-    const limit = Math.min(Math.max(input.limit ?? 100, 1), 100);
-    const r = await client.get<{ apps?: Array<{ appId?: string; name?: string; spaceId?: string | null }> }>("apps", { limit }, def.guestSpaceId ?? undefined);
-    const apps = (r.apps ?? []).map((a) => ({
-      appId: Number(a.appId ?? 0),
-      name: String(a.name ?? ""),
-      ...(a.spaceId ? { spaceId: Number(a.spaceId) } : {}),
-    }));
+    const name = input.name?.trim();
+    // kintone は 1 回に 100 件まで。kSQL の SHOW APPS と同じく**こちらで続きを読んで集める**（AI に offset を回させない）。
+    // 大きなドメインで延々と読まないように、取る件数の上限（max）と往復の回数を決めておく
+    const max = Math.min(Math.max(input.limit ?? MAX_APPS, 1), MAX_APPS);
+    const page = 100;
+    const apps: Array<{ appId: number; name: string; spaceId?: number }> = [];
+    let offset = Math.max(input.offset ?? 0, 0);
+    let more = false;
+    for (let round = 0; round < Math.ceil(MAX_APPS / page); round += 1) {
+      const r = await client.get<{ apps?: Array<{ appId?: string; name?: string; spaceId?: string | null }> }>(
+        "apps",
+        { limit: page, ...(offset ? { offset } : {}), ...(name ? { name } : {}) },
+        def.guestSpaceId ?? undefined,
+      );
+      const got = r.apps ?? [];
+      for (const a of got) {
+        apps.push({ appId: Number(a.appId ?? 0), name: String(a.name ?? ""), ...(a.spaceId ? { spaceId: Number(a.spaceId) } : {}) });
+      }
+      offset += got.length;
+      if (got.length < page) break;
+      if (apps.length >= max) {
+        more = true;
+        break;
+      }
+    }
+    if (apps.length > max) apps.length = max;
     return {
       status: "ok",
       profile: def.profile,
       host: def.host,
       apps,
-      findings: connectionWarnings(set),
-      message: `${apps.length} 件（上限 ${limit} 件）。どのアプリを使うかは**利用者に確かめる**`,
+      findings: more
+        ? [
+            ...connectionWarnings(set),
+            { level: "info" as const, code: "apps-more", message: `${max} 件で切った（まだ続きがある）。name で名前を絞るか、offset ${offset} で続きを読む` },
+          ]
+        : connectionWarnings(set),
+      message: `${apps.length} 件${name ? `（名前に「${name}」を含む）` : ""}${more ? "・まだ続きがある" : ""}。どのアプリを使うかは**利用者に確かめる**`,
     };
   } catch (e) {
     return { ...fromConnectionError(e), profile: def.profile, host: def.host };

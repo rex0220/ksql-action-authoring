@@ -230,15 +230,19 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
     {
       title: "kact: アプリの一覧",
       description:
-        "接続のファイルの profile で見えるアプリの一覧（番号・名前・スペース）を**読み取り（GET）だけ**で返す。**ログイン名とパスワードの接続でだけ**使える（API トークンはアプリごとの鍵なので一覧は読めない）。" +
+        "接続のファイルの profile で見えるアプリの一覧（番号・名前・スペース）を**読み取り（GET）だけ**で返す。kintone は 1 回に 100 件までだが、**続きはツールが読んで集める**（既定 500 件まで。切れたら findings で伝える）。" +
+        "**名前が分かっているなら name（部分一致）で絞る**ほうが速く確実。**ログイン名とパスワードの接続でだけ**使える（API トークンはアプリごとの鍵なので一覧は読めない）。" +
         "どのアプリを使うかは一覧から推測せず、**利用者に確かめる**。",
       inputSchema: {
         profile: z.string().min(1).max(40).optional().describe("接続のファイルの profile（省略すると defaultProfile）"),
-        limit: z.number().int().min(1).max(100).optional().describe("返す件数（既定 100）"),
+        name: z.string().min(1).max(64).optional().describe("名前で絞る（部分一致）。**番号の大きいアプリは先頭 100 件に入らないので、名前で絞る**"),
+        limit: z.number().int().min(1).max(500).optional().describe("集める件数の上限（既定 500。kintone の 100 件ずつはツールが続きを読む）"),
+        offset: z.number().int().min(0).max(100000).optional().describe("続きを読む位置（100 件で切れたとき）"),
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async ({ profile, limit }) => json(await listApps({ ...(profile ? { profile } : {}), ...(limit ? { limit } : {}) }, kintoneOptions())),
+    async ({ profile, name, limit, offset }) =>
+      json(await listApps({ ...(profile ? { profile } : {}), ...(name ? { name } : {}), ...(limit ? { limit } : {}), ...(offset ? { offset } : {}) }, kintoneOptions())),
   );
 
   server.registerTool(

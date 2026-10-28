@@ -48,8 +48,8 @@ kintone プラグイン **「kSQL アクション」（rex0220 kSQL Action）** 
 | `kact_update_action` | アクションを 1 つ差し替える・足す（`expectedDigest` で照合。直した差を `changes` で返す） | 作業フォルダー |
 | `kact_delete_action` | アクションを 1 つ消す（`expectedDigest` で照合。最後の 1 件は消せない） | 作業フォルダー |
 | `kact_pull` | 設定画面でダウンロードした設定を作業フォルダーに写す（**元は残す**） | 作業フォルダー |
-| `kact_fields` | kintone の項目定義を**読み取り（GET）だけ**で取り、控えて要約を返す。取った後は計算式を**項目コードまで検査**する | kintone（GET）＋ 作業フォルダー |
-| `kact_apps` | アプリの一覧（**ログイン名とパスワードの接続のときだけ**。API トークンでは読めない） | kintone（GET） |
+| `kact_fields` | kintone の項目定義を**読み取り（GET）だけ**で取り、控えて要約（コード・型・ラベル・重複禁止・テーブルの子・**SQL で書ける項目か**）を返す。取った後は計算式を**項目コードまで検査**する | kintone（GET）＋ 作業フォルダー |
+| `kact_apps` | アプリの一覧（`name` で名前を絞れる。続きはツールが読んで集める。**ログイン名とパスワードの接続のときだけ**） | kintone（GET） |
 
 **kintone には何も書きません。** 書くのは作業フォルダーの中だけで、取り込みと実行は利用者が設定画面で行います。
 kintone に送るのは `kact_fields` / `kact_apps` の **GET** だけで、送れるパスは固定しています（`src/kintone-rest.ts` の `ALLOWED_APIS`。レコードは読みません）。

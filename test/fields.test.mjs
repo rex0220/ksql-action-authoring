@@ -117,6 +117,51 @@ test("listApps: ログイン名とパスワードの profile では一覧を返�
   assert.equal(r.status, "ok", JSON.stringify(r.findings));
   assert.deepEqual(r.apps, [{ appId: 1001, name: "受注", spaceId: 364 }]);
   assert.ok(calls[0].headerNames.includes("X-Cybozu-Authorization"));
+  assert.equal(calls[0].url.includes("name="), false, "name を渡していないのにクエリに付いている");
+});
+
+// 2026-10-28 の実機確認: 番号の大きいアプリが先頭 100 件に入らず見つからなかった。
+// kSQL の SHOW APPS と同じく、続きはツールが読んで集める
+test("listApps: 100 件ずつ続きを読んで集める（name と offset もクエリに渡す）", { skip }, async () => {
+  const many = Array.from({ length: 100 }, (_, i) => ({ appId: String(i + 1), name: "アプリ" }));
+  const { impl, calls } = stubFetch({ "apps.json": { apps: many } });
+  const r = await fields.listApps({ profile: "userpass", name: "kact-spike", limit: 250 }, opt({ fetchImpl: impl }));
+  assert.equal(r.status, "ok");
+  assert.ok(calls[0].url.includes("name=kact-spike"), calls[0].url);
+  // 100 件ずつ 3 回読んで 250 件で切る（毎回 100 件返るスタブ）
+  assert.equal(calls.length, 3);
+  assert.ok(calls[1].url.includes("offset=100"), calls[1].url);
+  assert.equal(r.apps.length, 250);
+  assert.ok(r.findings.some((f) => f.code === "apps-more"), JSON.stringify(r.findings));
+  assert.match(r.message, /まだ続きがある/);
+});
+
+test("listApps: 100 件に満たなければ 1 回で終わる", { skip }, async () => {
+  const { impl, calls } = stubFetch({ "apps.json": { apps: [{ appId: "4377", name: "[kact-spike] 受注", spaceId: "364" }] } });
+  const r = await fields.listApps({ profile: "userpass", name: "kact-spike" }, opt({ fetchImpl: impl }));
+  assert.equal(calls.length, 1);
+  assert.deepEqual(r.apps, [{ appId: 4377, name: "[kact-spike] 受注", spaceId: 364 }]);
+  assert.equal(r.findings.some((f) => f.code === "apps-more"), false);
+});
+
+// kSQL の ksql_describe_app を参考に、値の出どころ（SQL で書けるか）を返す
+test("summarizeFields: 自動の項目・計算・ルックアップのコピー先に writable: false を付ける", { skip }, () => {
+  const props = {
+    レコード番号: { type: "RECORD_NUMBER", code: "レコード番号", label: "番号" },
+    合計: { type: "CALC", code: "合計", label: "合計" },
+    顧客コード: { type: "SINGLE_LINE_TEXT", code: "顧客コード", label: "顧客コード", unique: true, lookup: { fieldMappings: [{ field: "顧客名" }] } },
+    顧客名: { type: "SINGLE_LINE_TEXT", code: "顧客名", label: "顧客名" },
+    金額: { type: "NUMBER", code: "金額", label: "金額" },
+  };
+  const byCode = Object.fromEntries(fields.summarizeFields(props).map((f) => [f.code, f]));
+  assert.deepEqual(byCode["レコード番号"].readOnly, "auto");
+  assert.deepEqual(byCode["合計"].readOnly, "calc");
+  assert.deepEqual(byCode["顧客名"].readOnly, "lookupCopy");
+  assert.equal(byCode["顧客コード"].lookup, true);
+  assert.equal(byCode["顧客コード"].unique, true);
+  assert.equal(byCode["顧客コード"].writable, undefined, "ルックアップ自身は書ける（キーを入れる）");
+  assert.equal(byCode["金額"].writable, undefined);
+  assert.equal(byCode["レコード番号"].writable, false);
 });
 
 // --- 項目定義つきの計算式の検査（kact_check の段階 3） ---
