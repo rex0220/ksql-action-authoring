@@ -57,13 +57,31 @@ DECLARE @_selected = [];     -- 配列（「まとめて 1 回」「グループ
 
 ## ガードと冪等
 
-```sql
-ASSERT (SELECT COUNT(*) FROM LAPP_受注 WHERE 顧客コード = @cust) > 0
-  MESSAGE '対象の受注がありません';
-EXIT SUCCESS IF (SELECT COUNT(*) FROM LAPP_受注 WHERE 処理状況 <> '済') = 0;
+**形**（メッセージは `,`（コンマ）で続けます。**`MESSAGE` という語はありません**）:
+
+```
+ASSERT [WARN] <式> <比較演算子> <式> [, 'メッセージ'];
+ASSERT [WARN] <式> BETWEEN <式> AND <式> [, 'メッセージ'];
+EXIT SUCCESS IF <同じ形の条件>, 'メッセージ';
 ```
 
-- **`ASSERT` の `MESSAGE` は画面に出ます**（この製品で値を画面に出す唯一の例外）。
+```sql
+ASSERT (SELECT COUNT(*) FROM LAPP_受注 WHERE 顧客コード = @cust) > 0, '対象の受注がありません';
+ASSERT @cust <> '', '顧客コードがありません';
+EXIT SUCCESS IF (SELECT COUNT(*) FROM LAPP_受注 WHERE 処理状況 <> '済') = 0, '対象がありません';
+```
+
+- `ASSERT` のメッセージは**省けます**が、`EXIT SUCCESS IF` の**メッセージは必須**です（無いと `pParse`）。
+- `WARN` を付けると、条件が不成立でも**警告として続行**します（止めたいときは付けない）。
+- 条件に書けるもの: 数値・**文字列リテラル**（`''` も可）・パラメーター（`@cust`）・算術式・スカラーサブクエリ。
+  **書けないもの**（どれも `pParse`）:
+  - **フィールド参照**（`FROM` が無いため）。レコードの値を見るならスカラーサブクエリにする
+  - **`AND` / `OR` の複合条件** → `ASSERT` を**複数の文に分ける**
+  - **条件全体を括弧で包む**（`ASSERT (@cust <> '') , '…'`）。括弧は算術式と読まれ、中は数値だけです
+  - 裸の値（`ASSERT 1`）
+- キーが空のときに止めるだけなら、`ASSERT` ではなく**実行条件**（`execCond` ＋ `execNgMessage`）でも書けます。
+  押す前に止まって理由も出せるので、こちらのほうが利用者には親切です（`formula` の章）。
+- **`ASSERT` のメッセージは画面に出ます**（この製品で文を画面に出す唯一の例外）。
   だから**メッセージに業務データの値を書かない**（「対象がありません」のような固定の文にする）。
 - 何度流しても同じ結果になる形（`UPSERT`、`DELETE` → `INSERT … SELECT`）で書く。`patterns` の 4 文がその形です。
 

@@ -130,3 +130,49 @@ test("checkConfig: 「グループごと」で分ける式が空なら invalid",
   assert.equal(r.status, "invalid", JSON.stringify(r.findings));
   assert.ok(r.findings.some((f) => f.code === "config" && f.message.includes("group:formula")), JSON.stringify(r.findings));
 });
+
+// ガード文の形（docs/sql.md の「ガードと冪等」）。資料の例が実物のエンジンで通ることを固定する。
+// 2026-10-28 の試用で、資料が `MESSAGE '…'` と書いていてパースできなかった（正しくは `, '…'`）
+const guard = (sql) => ({
+  configVersion: 1, bindings: [{ name: "受注", appId: 1001 }],
+  limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+  timezone: "",
+  actions: [{
+    enabled: true, code: "guard", name: "ガード", description: "", type: "record", placements: ["detail_menu"],
+    targetViews: [], showCond: "", execCond: "", execNgMessage: "",
+    params: [{ name: "cust", source: "formula", formula: "顧客コード" }], inputs: [],
+    sql,
+    staticInsertRows: 0, confirm: true, writeLimit: 0, allowed: [], resultMessage: "",
+    listOnError: "continue", selectionMode: "loop", groupFormula: "", perRecordLock: false, prevRecord: false,
+  }],
+});
+const HEAD = "-- @ksql dialect: 1\nDECLARE @cust = '';\n";
+const WRITE = "\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 顧客コード = @cust;";
+
+test("checkConfig: ガードは コンマ + メッセージ の形なら ok（文字列リテラルも置ける）", { skip }, async () => {
+  for (const g of [
+    "ASSERT @cust <> '', '顧客コードがありません';",
+    "ASSERT @cust <> '';",
+    "ASSERT WARN @cust <> '', '注意だけ';",
+    "ASSERT (SELECT COUNT(*) FROM LAPP_受注 WHERE 顧客コード = @cust) > 0, '対象がありません';",
+    "EXIT SUCCESS IF (SELECT COUNT(*) FROM LAPP_受注 WHERE 顧客コード = @cust) = 0, '対象がありません';",
+  ]) {
+    const r = await core.checkConfig(envelope(guard(HEAD + g + WRITE)), { pluginZip: ZIP });
+    assert.equal(r.status, "ok", `${g} / ${JSON.stringify(r.findings)}`);
+  }
+});
+
+test("checkConfig: 構文が通らないガードは pParse だけ（行番号つき。派生のエラーを出さない）", { skip }, async () => {
+  for (const g of [
+    "ASSERT @cust <> '' MESSAGE 'だめ';",                    // MESSAGE という語は無い
+    "ASSERT (@cust <> '') MESSAGE 'だめ';",                   // 条件全体を括弧で包めない
+    "ASSERT @cust <> '' AND @cust <> 'X', 'だめ';",           // AND / OR の複合条件は不可
+    "EXIT SUCCESS IF @cust <> '';",                          // EXIT はメッセージ必須
+  ]) {
+    const r = await core.checkConfig(envelope(guard(HEAD + g + WRITE)), { pluginZip: ZIP });
+    assert.equal(r.status, "invalid", g);
+    const errors = r.findings.filter((f) => f.level === "error");
+    assert.deepEqual(errors.map((f) => f.code), ["pParse"], `${g} / ${JSON.stringify(errors)}`);
+    assert.match(errors[0].message, /^\d+ 行目: /, errors[0].message);
+  }
+});
