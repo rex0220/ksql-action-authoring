@@ -54,10 +54,10 @@ after(async () => {
 });
 const call = async (client, name, args = {}) => JSON.parse((await client.callTool({ name, arguments: args })).content[0].text);
 
-test("ツールが 10 本出る（読み取り専用の注釈つき）", { skip }, async () => {
+test("ツールが 11 本出る（読み取り専用の注釈つき）", { skip }, async () => {
   const { tools } = await client.listTools();
   assert.deepEqual(tools.map((t) => t.name).sort(), [
-    "kact_actions", "kact_check", "kact_diff", "kact_docs", "kact_files",
+    "kact_actions", "kact_check", "kact_delete_action", "kact_diff", "kact_docs", "kact_files",
     "kact_pull", "kact_save_config", "kact_status", "kact_update_action", "kact_workspace_status",
   ]);
   const readOnly = new Set(["kact_docs", "kact_status", "kact_workspace_status", "kact_check", "kact_actions", "kact_files", "kact_diff"]);

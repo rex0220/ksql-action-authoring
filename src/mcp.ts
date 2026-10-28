@@ -17,7 +17,7 @@ import { z } from "zod";
 import { readFileSync } from "node:fs";
 import { checkConfig, listActions, statusOf } from "./core.ts";
 import { resolveInWorkspace, workspaceStatus, WorkspaceError } from "./workspace.ts";
-import { digestOf, filesOf, pullConfig, saveConfig, updateAction } from "./save.ts";
+import { deleteAction, digestOf, filesOf, pullConfig, saveConfig, updateAction } from "./save.ts";
 import { diffConfigs } from "./diff.ts";
 import { toolsMeta } from "./meta.ts";
 import { DOCS, indexText, search, sectionKeys, sectionOf, sectionText } from "./docs.ts";
@@ -209,6 +209,24 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     async ({ file, expectedDigest, action, replaceCode }) => json(await updateAction({ file, expectedDigest, action, replaceCode }, zipOptions())),
+  );
+
+  server.registerTool(
+    "kact_delete_action",
+    {
+      title: "kact: アクションを消す",
+      description:
+        "既存の設定ファイルからアクションを 1 つ消す。**kact_actions で読んだ digest を expectedDigest に渡す**（読んだ後に変わっていたら conflict）。" +
+        "取り込みは全置換なので、**残すつもりのないアクションは消す**（無効にして残すと、検査されない SQL がプラグイン設定に入ったまま運用に反映される）。" +
+        "最後の 1 件は消せない（アクションが 0 件の設定は保存できない）。消す前に kact_actions で中身を見せ、**利用者に確かめてから呼ぶ**。",
+      inputSchema: {
+        file: z.string().min(1).max(200).describe("作業フォルダーからの相対パス"),
+        expectedDigest: z.string().min(16).max(128).describe("kact_actions か kact_files が返した digest"),
+        code: z.string().min(1).max(64).describe("消すアクションのコード"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ file, expectedDigest, code }) => json(await deleteAction({ file, expectedDigest, code }, zipOptions())),
   );
 
   server.registerTool(

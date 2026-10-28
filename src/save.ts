@@ -290,6 +290,79 @@ export async function updateAction(input: UpdateActionInput, opt: LoadEngineOpti
   }
 }
 
+export interface DeleteActionInput {
+  file: string;
+  /** 読んだ時点の digest（`kact_actions` が返す）。違えば conflict */
+  expectedDigest: string;
+  /** 消すアクションのコード（大文字小文字は無視） */
+  code: string;
+  now?: () => Date;
+}
+
+/**
+ * アクションを 1 つ消す（`expectedDigest` で照合してから書く）。
+ * 取り込みは全置換なので、**残すつもりのないアクションは消しておく**
+ * （無効にして残すと、検査されない SQL がプラグイン設定に入ったまま運用に反映される。2026-10-28 の試用 S4）。
+ * 最後の 1 件は消せない（アクションが 0 件の設定は保存の検査を通らない）。
+ */
+export async function deleteAction(input: DeleteActionInput, opt: LoadEngineOptions = {}): Promise<SaveResult> {
+  const engine = await engineOf(opt);
+  if (isResult(engine)) return engine;
+  if (typeof input.code !== "string" || !input.code) return fail("input", "code が要る（消すアクションのコード）", "invalid");
+  if (!input.expectedDigest) return fail("input", "expectedDigest が要る（kact_actions で読んだ digest）", "invalid");
+
+  let target: string;
+  try {
+    target = resolveInWorkspace(input.file);
+  } catch (e) {
+    return fromWorkspaceError(e);
+  }
+  const current = readFileSync(target, "utf8");
+  if (digestOf(current) !== input.expectedDigest) {
+    return { status: "conflict", findings: [{ level: "error", code: "digest", message: "読んだ後にファイルが変わった（digest が違う）。kact_actions で読み直してやり直す" }], path: input.file };
+  }
+
+  let envelope: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(current);
+    if (!isObject(parsed)) throw new Error("設定ファイルがオブジェクトでない");
+    envelope = parsed;
+  } catch (e) {
+    return fail("parse-failed", e instanceof Error ? e.message : String(e), "invalid");
+  }
+
+  const body = bodyOf(envelope);
+  const actions = (Array.isArray(body.actions) ? body.actions : []) as Array<Record<string, unknown>>;
+  const wanted = input.code.toLowerCase();
+  const at = actions.findIndex((a) => String(a.code ?? "").toLowerCase() === wanted);
+  if (at < 0) return fail("not-found", `そのコードのアクションが無い: ${input.code}（kact_actions で確かめる）`, "invalid");
+  if (actions.length <= 1) return fail("last-action", "最後のアクションは消せない（アクションが 0 件の設定は保存できない）。ファイルごと消すかは利用者が決める", "invalid");
+  const removed = actions[at]!;
+  const nextActions = actions.filter((_, i) => i !== at);
+
+  const text = JSON.stringify({ ...envelope, date: formatDate((input.now ?? (() => new Date()))()), ...bodyOf({ ...body, actions: nextActions }) });
+  const checked = await checkOrFail(text, opt);
+  if (!checked.ok) return checked.result;
+
+  try {
+    const { digest, cleanup } = commit(target, text, "replace", () => {
+      if (resolveInWorkspace(input.file) !== target) throw new WorkspaceError("書く先が途中で変わった（symlink など）", "outside");
+      if (digestOf(readFileSync(target)) !== input.expectedDigest) throw new LockBusyError("確定の直前にファイルが変わった（digest が違う）。kact_actions で読み直してやり直す");
+    });
+    return {
+      status: "ok",
+      path: input.file,
+      digest,
+      summary: checked.summary,
+      findings: checked.findings,
+      message: `消したアクション: ${String(removed.code ?? input.code)}${cleanup.length ? "（一時ファイルかロックを消せなかった。. で始まる同じ名前のファイルを消してよい）" : ""}`,
+      changes: actionDiff(String(removed.code ?? input.code), removed, undefined).join("\n"),
+    };
+  } catch (e) {
+    return fromCommitError(e);
+  }
+}
+
 /** 封筒の date と同じ形（設定画面の書き出しに合わせる） */
 function formatDate(d: Date): string {
   const p = (n: number): string => String(n).padStart(2, "0");

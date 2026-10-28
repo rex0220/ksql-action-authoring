@@ -225,3 +225,46 @@ test("updateAction: 足したときは「追加」を返す", { skip }, async ()
   assert.equal(r.status, "ok", JSON.stringify(r.findings));
   assert.match(r.changes, /アクション added: 追加/);
 });
+
+// キーの順だけが変わった差は出さない（既定値で埋め直すと順が変わる。2026-10-28 の試用 S4）
+test("updateAction: 中身が同じ params / inputs は changes に出さない", { skip }, async () => {
+  const first = await save.saveConfig({
+    file: "settings/kact-order.json", appId: 1001,
+    config: config({ actions: [action({ code: "ord", params: [{ formula: "顧客コード", name: "cust", source: "formula" }] })] }),
+  }, opt);
+  assert.equal(first.status, "ok", JSON.stringify(first.findings));
+  // code と enabled だけ渡す（S4 の回が 5 回やった形）
+  const r = await save.updateAction({ file: "settings/kact-order.json", expectedDigest: first.digest, action: { code: "ord", enabled: false } }, opt);
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  assert.match(r.changes, /enabled: true → false/);
+  assert.equal(/params:/.test(r.changes), false, `キーの順だけの差が出ている: ${r.changes}`);
+  assert.equal(/inputs:/.test(r.changes), false, `キーの順だけの差が出ている: ${r.changes}`);
+});
+
+// アクションを消す口（2026-10-28 Takashi「足す」。試用 S4 で無効 5 回で代用していた）
+test("deleteAction: digest が合えば消す（changes に削除が出る）", { skip }, async () => {
+  const two = config({ actions: [action({ code: "keep" }), action({ code: "gone", name: "消す" })] });
+  const first = await save.saveConfig({ file: "settings/kact-del.json", appId: 1001, config: two }, opt);
+  assert.equal(first.status, "ok", JSON.stringify(first.findings));
+  const r = await save.deleteAction({ file: "settings/kact-del.json", expectedDigest: first.digest, code: "GONE" }, opt);
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  assert.equal(r.summary.actions, 1);
+  assert.match(r.changes, /アクション gone: 削除/);
+  const env = JSON.parse(readFileSync(join(ws, "settings/kact-del.json"), "utf8"));
+  assert.deepEqual(env.actions.map((a) => a.code), ["keep"]);
+});
+
+test("deleteAction: digest が違えば conflict、無いコードは invalid、最後の 1 件は消せない", { skip }, async () => {
+  const files = await save.filesOf(opt);
+  const digest = files.files.find((f) => f.path === "settings/kact-del.json").digest;
+  const bad = await save.deleteAction({ file: "settings/kact-del.json", expectedDigest: "0".repeat(64), code: "keep" }, opt);
+  assert.equal(bad.status, "conflict");
+  const missing = await save.deleteAction({ file: "settings/kact-del.json", expectedDigest: digest, code: "nosuch" }, opt);
+  assert.equal(missing.status, "invalid");
+  assert.ok(missing.findings.some((f) => f.code === "not-found"), JSON.stringify(missing.findings));
+  const last = await save.deleteAction({ file: "settings/kact-del.json", expectedDigest: digest, code: "keep" }, opt);
+  assert.equal(last.status, "invalid");
+  assert.ok(last.findings.some((f) => f.code === "last-action"), JSON.stringify(last.findings));
+  // どの失敗でもファイルは変わっていない
+  assert.equal(JSON.parse(readFileSync(join(ws, "settings/kact-del.json"), "utf8")).actions.length, 1);
+});

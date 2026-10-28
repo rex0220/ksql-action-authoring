@@ -222,3 +222,27 @@ test("checkConfig: 分ける式の構文も見る（保存のときダイアロ�
   assert.equal(r.status, "invalid");
   assert.ok(r.findings.some((f) => f.code === "pFormulaSyntax" && /groupFormula/.test(f.message)), JSON.stringify(r.findings));
 });
+
+// 引用符を忘れた素の文は警告（2026-10-28 Takashi「警告を足す」。試用 S4 の execNgMessage）
+test("checkConfig: 引用符の無い素の文は警告（保存は止めない）", { skip }, async () => {
+  const r = await core.checkConfig(envelope(formulaAction({
+    execCond: '顧客コード <> ""',
+    execNgMessage: "顧客コードが空のため集計できません。顧客コードを入れてください。",
+  })), { pluginZip: ZIP });
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));  // warning なので ok
+  const w = r.findings.find((f) => f.code === "pFormulaQuote");
+  assert.ok(w, JSON.stringify(r.findings));
+  assert.equal(w.level, "warning");
+  assert.match(w.message, /execNgMessage/);
+  assert.equal(JSON.stringify(r).includes("顧客コードが空のため"), false, "式そのものが findings に出ている");
+});
+
+test("checkConfig: 本物の項目コードは警告にしない（項目定義は段階 3）", { skip }, async () => {
+  const r = await core.checkConfig(envelope(formulaAction({
+    showCond: "処理状況",
+    execCond: "顧客コード <> \"\"",
+    resultMessage: '"書き込み " & _result_total & " 件"',
+  })), { pluginZip: ZIP });
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  assert.equal(r.findings.length, 0, JSON.stringify(r.findings));
+});

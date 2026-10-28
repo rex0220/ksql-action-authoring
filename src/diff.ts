@@ -18,7 +18,22 @@ const ACTION_TEXTS = ["sql", "showCond", "execCond", "execNgMessage", "resultMes
 const ACTION_LISTS = ["placements", "targetViews", "params", "inputs", "allowed"];
 
 const show = (v: unknown): string => (v === undefined ? "（無し）" : typeof v === "string" ? (v === "" ? "（空）" : v) : JSON.stringify(v));
-const same = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+/**
+ * 値を比べるための文字列（**キーの順は無視する**）。
+ * 既定値で埋め直すとキーの順が変わるので、そのままの `JSON.stringify` では
+ * 中身が同じ `params` / `inputs` が「変わった」ように出ていた（2026-10-28 の試用 S4）。
+ */
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${canonical(o[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(v ?? null);
+}
+
+const same = (a: unknown, b: unknown): boolean => canonical(a) === canonical(b);
 
 export function bodyOf(envelope: Obj): Obj {
   const out: Obj = {};

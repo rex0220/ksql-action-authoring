@@ -114,7 +114,16 @@ function formulaSlots(action: Record<string, unknown>): Array<{ where: string; r
 }
 
 /** 項目定義が無い文脈でも分かる誤り（= 構文）だけを拾う。項目名・関数名の誤りは「項目が無い」と同じ形で出るので除く */
-const UNKNOWN_NAME = /FIELD CODE NOT FOUND/;
+const UNKNOWN_NAME = /FIELD CODE NOT FOUND:\s*([\s\S]*)$/;
+
+/**
+ * 「項目が無い」と言われた名前に、**項目コードには入らない文字**（空白・引用符・句読点）が混じっていたら、
+ * それは項目参照ではなく**引用符を忘れた素の文**。2026-10-28 の試用（S4）で、`execNgMessage` に
+ * 引用符の無い文（`顧客コードが空のため…ください。`）が入ったまま検査を通っていた。
+ * 括弧・引用符の**対応は取れている**ので構文としては正しく、項目定義が入る段階 3 までは区別できない。
+ * **error にはしない**（本物の項目名を弾かないため。保存は止めずに警告で伝える）。
+ */
+const NOT_A_FIELD_CODE = /[\s"'。、，．！？!?]/;
 
 /**
  * 計算式の**構文だけ**を見る（項目定義は要らない）。
@@ -134,13 +143,26 @@ function checkFormulaSyntax(engine: Engine, actions: Array<Record<string, unknow
     if (action.enabled === false) continue;
     for (const slot of formulaSlots(action)) {
       const r = engine.api.checkFormula(emptyContext, slot.raw) as { ok: boolean; msg?: string };
-      if (r.ok || UNKNOWN_NAME.test(r.msg ?? "")) continue;
+      if (r.ok) continue;
+      const at = { actionIndex: i + 1, actionCode: String(action.code ?? "") };
+      const unknown = UNKNOWN_NAME.exec(r.msg ?? "");
+      if (unknown) {
+        // 項目名・関数名の誤りは段階 3 まで区別できない。ただし項目コードに入らない文字が混じっていれば引用符の抜け
+        if (NOT_A_FIELD_CODE.test(unknown[1] ?? "")) {
+          findings.push({
+            level: "warning",
+            code: "pFormulaQuote",
+            message: `${slot.where}: 引用符 " の抜けかもしれない（固定の文も "…" で囲む。囲まないと項目コードとして読まれる）`,
+            ...at,
+          });
+        }
+        continue;
+      }
       findings.push({
         level: "error",
         code: "pFormulaSyntax",
         message: `${slot.where}: 式の構文が通らない（引用符 " と括弧の対応を確かめる）`,
-        actionIndex: i + 1,
-        actionCode: String(action.code ?? ""),
+        ...at,
       });
     }
   }
