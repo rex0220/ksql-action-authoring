@@ -1,0 +1,27 @@
+# kSQL アクション — オーサリング環境（Claude Code 向けメモ）
+
+このリポジトリは、**kintone プラグイン「kSQL アクション」（rex0220 kSQL Action）の設定を AI が作る**ための tools と MCP（接頭辞 `kact_`）です。
+公開（MIT）。有償プラグインのコードは入れません（検査は zip のオーサリング API を読んで呼ぶ）。
+計画と決定は `ksql-action/docs/オーサリングMCP_実装計画.md`（本体のリポジトリ。private）にあります。
+
+## 常に守ること
+
+- **kintone への書き込みは行わない。** tools と MCP は GET だけ。取り込みと実行は利用者が画面で行う。
+- **有償プラグインのコードをこのリポジトリに入れない。** 検査・計算式エンジンは**利用者の zip から読む**（`src/plugin-zip.ts` → `src/engine.ts`）。
+- 接続のファイル（`.env` の `KACT_KINTONE_CONFIG`、MCP の設定項目）と、そこが名前を書いた環境変数は利用者のもの。**読まない・書かない・表示しない**。
+- 設定ファイルは**上書きしない**（新規は別名、更新は `expectedDigest` の照合）。作業フォルダーの外に書かない。
+- 設定ファイルそのものを Read / head / node で表示しない（1 行の JSON なので全体が出る）。中身は `kact_actions` で見る。
+- 設定を作った・変えたら、**最後に必ず反映方法を伝える**: 設定画面で**アップロード → 保存 → 運用環境に反映 → ボタンを押して確かめる**。
+- 一覧 ID、権限のユーザー / 組織 / グループのコード、アプリ ID は**推測しない**（利用者に聞く）。
+
+## 版の対応
+
+- `src/meta.ts` の `SUPPORTED_API_VERSIONS` は、本体（`ksql-action/src/authoring/api.ts`）の `AUTHORING_API_VERSION` と対で保つ。
+  本体が API の名前や引数を変えて版を上げたら、ここに足して試験を流す。
+- `MIN_PLUGIN_VERSION` は、オーサリング API を同梱した最初のプラグインの版（Ver.1）。
+
+## 写し元
+
+`src/plugin-zip.ts` / `src/engine.ts` / `src/meta.ts` / `src/paths.ts` は、**印刷屋のオーサリング tools（`print-craft-authoring/tools`。MIT・同じ作者）から写して直したもの**です。
+zip の読み取り（2 層・zip bomb・CRC の確認）と、エンジンの読み込み（happy-dom、`moment` → `moment-timezone` → `bignumber` → 計算式エンジン → オーサリング API の順、`kintone` と `cybozu` のスタブ）の作りは向こうが正本です。
+直すときは向こうの変更も見る。

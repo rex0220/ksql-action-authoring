@@ -1,0 +1,22 @@
+{
+  "name": "@rex0220/ksql-action-authoring",
+  "version": "0.1.0",
+  "description": "kSQL アクションプラグイン（rex0220 kSQL Action）の設定を AI が作るためのツールと MCP（kact_）",
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test test/*.test.mjs",
+    "vendor": "node scripts/vendor.mjs"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0",
+    "happy-dom": "^15.0.0",
+    "typescript": "^5.6.0",
+    "zod": "^3.23.0"
+  }
+}
