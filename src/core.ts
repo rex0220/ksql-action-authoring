@@ -98,7 +98,8 @@ export interface CheckResult {
  * 設定ファイルの検査（kact_check）。**設定画面の保存と同じ規則**を zip の API で通す。
  * - 形（CONFIG_SCHEMA）と横断の検査（validateConfig）
  * - アクションごとに SQL の検査（checkActionSql。注意も返す）
- * - 計算式（表示条件・実行条件・結果メッセージ・パラメーター・分ける式）は `fields` を渡したときだけ
+ * - 計算式（表示条件・実行条件・結果メッセージ・パラメーター・分ける式）は**まだ検査しない**。
+ *   設定画面の `collectFormulaProblems` は項目定義（`loadFormulaContext`）が要るので、段階 3（`kact_fields`）で足す
  */
 export async function checkConfig(text: string, opt: LoadEngineOptions = {}): Promise<CheckResult> {
   let engine: Engine;

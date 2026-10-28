@@ -20,6 +20,14 @@
   本体が API の名前や引数を変えて版を上げたら、ここに足して試験を流す。
 - `MIN_PLUGIN_VERSION` は、オーサリング API を同梱した最初のプラグインの版（Ver.1）。
 
+## 資料（`docs/`）
+
+- `kact_docs` が返す章は `docs/manifest.json` の `sections`（key = section の名前）。Markdown を足したら manifest にも足す。
+- **正本は本体の `ksql-action/docs/spec.md`**。仕様が変わったら docs/ の該当章を直す（規約・標準形・APPLY・選択の渡し方・計算式）。
+- 資料は**ビルドのときに `dist/mcp.mjs` へ埋め込む**（`scripts/build.mjs` の `__KACT_DOCS__`）。
+  バンドルしないで動かすときは `docs/` から読むので、`npm test` は `npm run build` の後に流す。
+- 開発環境のホスト名・実アプリ ID・業務データの値を資料に書かない（例は架空の名前で書く）。
+
 ## 写し元
 
 `src/plugin-zip.ts` / `src/engine.ts` / `src/meta.ts` / `src/paths.ts` は、**印刷屋のオーサリング tools（`print-craft-authoring/tools`。MIT・同じ作者）から写して直したもの**です。

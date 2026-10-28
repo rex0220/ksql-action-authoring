@@ -1,0 +1,16 @@
+{
+  "note": "kact_docs が返す章。key は kact_docs の section の名前。kind: guide = 手順・決まり / ref = 資料",
+  "sections": [
+    { "key": "navi", "title": "使い方の案内（できること・頼み方）", "kind": "guide", "file": "navi.md" },
+    { "key": "howto-new", "title": "新しいアクションを作る手順", "kind": "guide", "file": "howto-new.md" },
+    { "key": "howto-edit", "title": "既存の設定を直す手順", "kind": "guide", "file": "howto-edit.md" },
+    { "key": "config", "title": "設定ファイルの形（封筒・共通設定・アクション）", "kind": "ref", "file": "config.md" },
+    { "key": "sql", "title": "SQL の規約（許す文・パラメーターの置ける場所）", "kind": "ref", "file": "sql.md" },
+    { "key": "patterns", "title": "集計と明細の標準形（4 文）", "kind": "ref", "file": "patterns.md" },
+    { "key": "apply", "title": "テーブル（サブテーブル）への書き戻し", "kind": "ref", "file": "apply.md" },
+    { "key": "selection", "title": "一覧の選択の渡し方（1 件ずつ / まとめて 1 回 / グループごと）", "kind": "ref", "file": "selection.md" },
+    { "key": "formula", "title": "計算式の口（表示条件・実行条件・パラメーター・結果メッセージ）", "kind": "ref", "file": "formula.md" },
+    { "key": "limits", "title": "確認・書き込み上限・安全", "kind": "ref", "file": "limits.md" },
+    { "key": "deploy", "title": "反映方法（利用者に必ず伝える）", "kind": "guide", "file": "deploy.md" }
+  ]
+}

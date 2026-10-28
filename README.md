@@ -30,7 +30,28 @@ kintone プラグイン **「kSQL アクション」（rex0220 kSQL Action）** 
 |---|---|
 | `src/` | tools の中核（zip の読み取り、エンジンとオーサリング API の読み込み、検査の呼び出し）と MCP サーバー |
 | `vendor/` | zip に入っていない moment（プラグインは CDN から読むため、tools は自前で持つ） |
-| `docs/` | 手順と資料（`kact_docs` が返すもの） |
+| `docs/` | 手順と資料（`kact_docs` が返すもの。`manifest.json` が章の一覧） |
+| `dist/` | `npm run build` が作る MCP サーバー 1 ファイル（`dist/mcp.mjs`） |
+
+## ツール（段階 1）
+
+| ツール | すること |
+|---|---|
+| `kact_docs` | 手順と資料（最初に呼ぶ）。引数なしで目次、`section` で章、`query` で探す |
+| `kact_status` | tools の版と、zip（プラグインの版・オーサリング API の版・計算式エンジン）の診断 |
+| `kact_workspace_status` | 作業フォルダーの場所と、その直下の JSON の名前 |
+| `kact_check` | 設定ファイルを**プラグイン本体と同じ規則**で検査（エラーと注意） |
+| `kact_actions` | 設定ファイルの中身を 1 アクション 1 行で（SQL 本文は返さない） |
+
+いずれも**読み取りだけ**（`readOnlyHint`）で、kintone には通信しません。
+
+### 起動の設定（AI の引数では変えられない）
+
+| | |
+|---|---|
+| `--surface claude-code \| desktop` | 出すツールの出し分け |
+| `KACT_PLUGIN_ZIP` | kSQL アクションプラグインの zip の場所 |
+| `KACT_WORKSPACE` | 作業フォルダー（省略時は起動したフォルダー） |
 
 ## ライセンス
 

@@ -110,3 +110,22 @@ test("listActions: 一覧に SQL 本文を含めない", { skip }, async () => {
   assert.deepEqual(a.params, ["cust"]);
   assert.equal(JSON.stringify(r).includes("LAPP_受注"), false, "SQL 本文が混ざっている");
 });
+
+// 保存時の structuralProblems と同じ規則が validateConfig 経由で通ること（2026-10-28 に本体へ足した抜け）
+test("checkConfig: 「グループごと」で分ける式が空なら invalid", { skip }, async () => {
+  const config = {
+    configVersion: 1, bindings: [{ name: "受注", appId: 4377 }],
+    limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+    timezone: "",
+    actions: [{
+      enabled: true, code: "g1", name: "グループごと", description: "", type: "list", placements: ["index_panel"],
+      targetViews: [], showCond: "", execCond: "", execNgMessage: "", params: [], inputs: [],
+      sql: "-- @ksql dialect: 1\nDECLARE @_group = '';\nDECLARE @_selected = [];\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 顧客コード = @_group AND $id IN @_selected;",
+      staticInsertRows: 0, confirm: true, writeLimit: 0, allowed: [], resultMessage: "",
+      listOnError: "continue", selectionMode: "group", groupFormula: "", perRecordLock: false, prevRecord: false,
+    }],
+  };
+  const r = await core.checkConfig(envelope(config), { pluginZip: ZIP });
+  assert.equal(r.status, "invalid", JSON.stringify(r.findings));
+  assert.ok(r.findings.some((f) => f.code === "config" && f.message.includes("group:formula")), JSON.stringify(r.findings));
+});
