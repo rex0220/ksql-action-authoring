@@ -3,7 +3,7 @@
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -32,6 +32,9 @@ const config = {
 };
 writeFileSync(join(ws, "settings.json"), JSON.stringify(config));
 writeFileSync(join(ws, "broken.json"), "{ これは JSON ではない");
+// 下の階層にも置く（直下だけを見ていたころ、既存の設定を見落として conflict になった。2026-10-28 の試用 S2）
+mkdirSync(join(ws, "settings"), { recursive: true });
+writeFileSync(join(ws, "settings", "nested.json"), JSON.stringify(config));
 
 let client;
 let transport;
@@ -72,10 +75,11 @@ test("kact_status: zip の版と API の版を返す", { skip }, async () => {
   assert.equal(r.surface, "claude-code");
 });
 
-test("kact_workspace_status: 作業フォルダーと JSON の名前", { skip }, async () => {
+test("kact_workspace_status: 作業フォルダーと JSON の名前（下の階層も）", { skip }, async () => {
   const r = await call(client, "kact_workspace_status");
   assert.equal(r.status, "ok");
   assert.ok(r.files.includes("settings.json"));
+  assert.ok(r.files.includes("settings/nested.json"), `下の階層が出ていない: ${JSON.stringify(r.files)}`);
   assert.equal(r.pluginZipConfigured, true);
 });
 

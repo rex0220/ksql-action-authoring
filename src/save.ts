@@ -52,7 +52,28 @@ function actionWithDefaults(engine: Engine, action: unknown): Record<string, unk
   if (!isObject(action)) return {};
   const code = typeof action.code === "string" ? action.code : "";
   const name = typeof action.name === "string" ? action.name : code;
-  return { ...(engine.api.defaultAction(code, name) as Record<string, unknown>), ...action };
+  const merged = { ...(engine.api.defaultAction(code, name) as Record<string, unknown>), ...action };
+  if (Array.isArray(action.params)) merged.params = action.params.map(paramWithDefaults);
+  if (Array.isArray(action.inputs)) merged.inputs = action.inputs.map(inputWithDefaults);
+  return merged;
+}
+
+/**
+ * `params[]` / `inputs[]` の中のキーも埋める（本体の API に `defaultParam` / `defaultInput` は無いので、
+ * `CONFIG_SCHEMA` が求めるキーをここで補う。スキーマは中のキーも**すべて必須**）。
+ * `inputs[].options` は `type: "text"` でも必須で、2026-10-28 の試用（S2）でここに落ちた。
+ * **`name` は補わない**（推測で空の名前にすると `DECLARE` の突き合わせで落ちて、原因が分かりにくい）。
+ */
+function paramWithDefaults(param: unknown): Record<string, unknown> {
+  if (!isObject(param)) return {};
+  return { source: "formula", formula: "", ...param };
+}
+
+function inputWithDefaults(input: unknown): Record<string, unknown> {
+  if (!isObject(input)) return {};
+  // 見出しが無ければ名前をそのまま出す（画面に出る文字なので空にしない）
+  const label = typeof input.name === "string" ? input.name : "";
+  return { label, type: "text", required: false, defaultFormula: "", options: [], ...input };
 }
 
 export interface SaveResult {

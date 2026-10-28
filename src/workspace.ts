@@ -42,7 +42,11 @@ export function resolveInWorkspace(relative: string, dir = workspaceDir()): stri
 
 export interface WorkspaceStatus {
   dir: string;
-  /** 作業フォルダーの直下にある設定ファイルらしきもの（*.json。中身は見ない） */
+  /**
+   * 作業フォルダーの中にある設定ファイルらしきもの（*.json。中身は見ない）。
+   * **下の階層（`settings/` など）も含む**相対パスで返す（直下だけを返していたころ、
+   * `settings/` の既存の設定が見えず「新規」と判断して `conflict` になった。2026-10-28 の試用 S2）。
+   */
   files: string[];
   /** zip の場所が設定されているか（値は出さない） */
   pluginZipConfigured: boolean;
@@ -51,10 +55,7 @@ export interface WorkspaceStatus {
 /** 作業フォルダーの診断（kact_workspace_status）。秘密の値は出さない */
 export function workspaceStatus(env: NodeJS.ProcessEnv = process.env): WorkspaceStatus {
   const dir = workspaceDir(env);
-  const files = readdirSync(dir, { withFileTypes: true })
-    .filter((d) => d.isFile() && d.name.endsWith(".json"))
-    .map((d) => d.name)
-    .slice(0, 50);
+  const files = listWorkspaceFiles(dir).map((f) => f.path).slice(0, 50);
   return { dir, files, pluginZipConfigured: !!env.KACT_PLUGIN_ZIP?.trim() };
 }
 

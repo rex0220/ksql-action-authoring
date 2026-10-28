@@ -168,3 +168,34 @@ test("diffConfigs: アクションの追加と SQL の行の差分", { skip }, a
   assert.match(d, /アクション close: 追加/);
   assert.equal(diffConfigs(before, before), "");
 });
+
+// 2026-10-28 の試用 S2 で落ちた形: inputs / params の中のキーを省いて渡す
+test("saveConfig: inputs と params の中のキーも既定値で埋まる（options を書かなくてよい）", { skip }, async () => {
+  const withInput = action({
+    code: "memo",
+    params: [
+      { name: "cust", source: "formula", formula: "顧客コード" },
+      { name: "memo", source: "input" },                           // formula を省く
+    ],
+    inputs: [{ name: "memo", label: "処理メモ", required: true }],   // type / defaultFormula / options を省く
+    sql: "-- @ksql dialect: 1\nDECLARE @cust = '';\nDECLARE @memo = '';\nUPDATE LAPP_受注 SET 処理メモ = @memo WHERE 顧客コード = @cust;",
+  });
+  const r = await save.saveConfig({ file: "settings/kact-inputs.json", appId: 1001, config: config({ actions: [withInput] }) }, opt);
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  const env = JSON.parse(readFileSync(join(ws, "settings/kact-inputs.json"), "utf8"));
+  const a = env.actions[0];
+  assert.deepEqual(a.inputs[0], { name: "memo", label: "処理メモ", type: "text", required: true, defaultFormula: "", options: [] });
+  assert.deepEqual(a.params[1], { name: "memo", source: "input", formula: "" });
+});
+
+test("saveConfig: inputs だけで params に行が無ければ invalid（書かない）", { skip }, async () => {
+  const onlyInput = action({
+    code: "memo2",
+    inputs: [{ name: "memo", label: "処理メモ" }],
+    sql: "-- @ksql dialect: 1\nDECLARE @cust = '';\nDECLARE @memo = '';\nUPDATE LAPP_受注 SET 処理メモ = @memo WHERE 顧客コード = @cust;",
+  });
+  const r = await save.saveConfig({ file: "settings/kact-only-input.json", appId: 1001, config: config({ actions: [onlyInput] }) }, opt);
+  assert.equal(r.status, "invalid");
+  assert.ok(r.findings.some((f) => f.code === "pParamMissing"), JSON.stringify(r.findings));
+  assert.equal(existsSync(join(ws, "settings/kact-only-input.json")), false, "検査に落ちたのに書かれている");
+});

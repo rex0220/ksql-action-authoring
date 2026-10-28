@@ -80,7 +80,7 @@
 | `targetViews` | 一覧 ID の配列 | 空 = すべての一覧。**一覧 ID は推測せず利用者に聞く** |
 | `showCond` | 計算式 | 偽ならボタンを出さない（イベント起動には効かない） |
 | `execCond` / `execNgMessage` | 計算式 | 偽なら実行せずメッセージ |
-| `params` | `[{ name, source, formula }]` | `source` は `"formula"` か `"input"`。SQL の `DECLARE` と**過不足なく 1 対 1** |
+| `params` | `[{ name, source, formula }]` | SQL の `DECLARE` と**過不足なく 1 対 1**（下の「パラメーターと入力項目」） |
 | `inputs` | `[{ name, label, type, required, defaultFormula, options }]` | 実行時に聞く値。`type` は `text` / `number` / `date` / `datetime` / `select` / `relative_date`。**イベント起動には持てない** |
 | `sql` | Flow dialect 1 | 1 本 20,000 字・20 文まで（`sql`） |
 | `staticInsertRows` | 整数 | 素の `INSERT … VALUES` の行数。**保存のときにプラグインが数え直して上書きする**ので、AI は書かなくてよい |
@@ -108,6 +108,30 @@
 
 **イベント起動の決まり**: 確認なし（`confirm: false`）＋ `writeLimit` 必須 ＋ `inputs` なし ＋ `showCond` は効かない。
 イベントは**ブラウザーの操作だけ**で動きます（REST API・CSV 読み込みでは動かない）。
+
+## パラメーターと入力項目
+
+SQL の `DECLARE` 1 本につき **`params` の行が 1 つ**要ります（予約名 `_record` / `_selected` / `_group` などは除く。`sql`）。
+値の出どころが `params[].source` で、**実行時に聞く値（`"input"`）のときは `inputs` にも同じ名前の行**が要ります
+（**`params` だけ・`inputs` だけでは足りません**。`inputs` だけだと `pParamMissing`、`params` だけだと `pInputMissing`）。
+
+```jsonc
+// DECLARE @cust（レコードの値）と DECLARE @memo（実行時に聞く値）の 2 本があるとき
+"params": [
+  { "name": "cust", "source": "formula", "formula": "顧客コード" },  // 計算式で決める
+  { "name": "memo", "source": "input" }                              // 実行時に聞く → inputs にも要る
+],
+"inputs": [
+  { "name": "memo", "label": "処理メモ", "required": true }
+]
+```
+
+- `source: "input"` の行に `formula` は要りません（空で埋まります）。
+- `inputs` の `label` / `type` / `required` / `defaultFormula` / `options` は**書かなければ既定で埋まります**
+  （`label` は名前、`type` は `text`、`required` は `false`、`options` は `[]`）。
+- `options` を書くのは `type` が **`select`** か **`relative_date`** のときだけです。どちらも**選択肢**として出るので、
+  空のままだと利用者は何も選べません（`relative_date` では、許す日付関数のトークンを並べます）。
+- `type: "relative_date"` の入力項目と対になる `DECLARE` は、`RELATIVE_DATE` 注釈つきで書きます（`sql`）。
 
 ## 容量
 
