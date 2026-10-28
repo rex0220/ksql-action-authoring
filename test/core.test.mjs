@@ -4,9 +4,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-const ZIP = "/Users/rex0220/Projects/kintone-plugin/ksql-action/dist/ksql-action-plugin1.zip";
+// zip の場所は KACT_PLUGIN_ZIP か、隣に置いた本体のリポジトリ（無ければ skip）
+const ZIP = process.env.KACT_PLUGIN_ZIP?.trim() || fileURLToPath(new URL("../../ksql-action/dist/ksql-action-plugin1.zip", import.meta.url));
 const require = createRequire(import.meta.url);
 const esbuild = require("esbuild");
 mkdirSync("dist", { recursive: true });

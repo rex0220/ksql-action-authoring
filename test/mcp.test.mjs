@@ -1,6 +1,7 @@
 // MCP サーバーの試験: 実際に stdio で起動し、SDK の client からツールを呼ぶ。
 // 使い方: npm test（先に npm run build が要る）
 import { after, before, test } from "node:test";
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,7 +9,8 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-const ZIP = "/Users/rex0220/Projects/kintone-plugin/ksql-action/dist/ksql-action-plugin1.zip";
+// zip の場所は KACT_PLUGIN_ZIP か、隣に置いた本体のリポジトリ（無ければ skip）
+const ZIP = process.env.KACT_PLUGIN_ZIP?.trim() || fileURLToPath(new URL("../../ksql-action/dist/ksql-action-plugin1.zip", import.meta.url));
 const skip = !existsSync(ZIP) || !existsSync("dist/mcp.mjs");
 
 // 作業フォルダー（設定ファイルを 1 つ置く）
