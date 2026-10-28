@@ -199,3 +199,29 @@ test("saveConfig: inputs だけで params に行が無ければ invalid（書か
   assert.ok(r.findings.some((f) => f.code === "pParamMissing"), JSON.stringify(r.findings));
   assert.equal(existsSync(join(ws, "settings/kact-only-input.json")), false, "検査に落ちたのに書かれている");
 });
+
+// kact_update_action は同じファイルを書き替えるので、直したところの差を返す（2026-10-28 の試用 S3）
+test("updateAction: 直したところの差（changes）を返す", { skip }, async () => {
+  const first = await save.saveConfig({ file: "settings/kact-changes.json", appId: 1001, config: config() }, opt);
+  assert.equal(first.status, "ok", JSON.stringify(first.findings));
+  const r = await save.updateAction({
+    file: "settings/kact-changes.json",
+    expectedDigest: first.digest,
+    action: { code: "sum", writeLimit: 10, sql: "-- @ksql dialect: 1\nDECLARE @cust = '';\n-- 直した\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 顧客コード = @cust;" },
+  }, opt);
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  assert.match(r.changes, /writeLimit: 0 → 10/);
+  assert.match(r.changes, /^\+ -- 直した$/m);
+});
+
+test("updateAction: 足したときは「追加」を返す", { skip }, async () => {
+  const files = await save.filesOf(opt);
+  const digest = files.files.find((f) => f.path === "settings/kact-changes.json").digest;
+  const r = await save.updateAction({
+    file: "settings/kact-changes.json",
+    expectedDigest: digest,
+    action: { code: "added", name: "足した", type: "record", placements: ["detail_menu"], params: [], sql: "-- @ksql dialect: 1\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 処理状況 = '';" },
+  }, opt);
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  assert.match(r.changes, /アクション added: 追加/);
+});

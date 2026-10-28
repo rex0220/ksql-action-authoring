@@ -198,7 +198,8 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
       title: "kact: アクションを差し替える・足す",
       description:
         "既存の設定ファイルのアクションを 1 つ差し替える（同じコードが無ければ末尾に足す）。**kact_actions で読んだ digest を expectedDigest に渡す**（読んだ後に変わっていたら conflict）。" +
-        "書く前に設定全体を本体と同じ規則で検査し、エラーがあれば書かない。",
+        "書く前に設定全体を本体と同じ規則で検査し、エラーがあれば書かない。" +
+        "返りの changes に**直したところの差**（変わった行だけ）が入るので、利用者にはそれを見せる（同じファイルを書き替えるので kact_diff では見られない）。",
       inputSchema: {
         file: z.string().min(1).max(200).describe("作業フォルダーからの相対パス"),
         expectedDigest: z.string().min(16).max(128).describe("kact_actions か kact_files が返した digest"),

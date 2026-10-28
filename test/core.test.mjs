@@ -176,3 +176,49 @@ test("checkConfig: 構文が通らないガードは pParse だけ（行番号�
     assert.match(errors[0].message, /^\d+ 行目: /, errors[0].message);
   }
 });
+
+// 計算式の構文（2026-10-28 の試用 S3 で、引用符が落ちた resultMessage を ok で通した）
+const formulaAction = (over) => ({
+  configVersion: 1, bindings: [{ name: "受注", appId: 1001 }],
+  limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+  timezone: "",
+  actions: [{
+    enabled: true, code: "f1", name: "式の試験", description: "", type: "record", placements: ["detail_menu"],
+    targetViews: [], showCond: "", execCond: "", execNgMessage: "",
+    params: [{ name: "cust", source: "formula", formula: "顧客コード" }], inputs: [],
+    sql: HEAD + WRITE,
+    staticInsertRows: 0, confirm: true, writeLimit: 0, allowed: [], resultMessage: "",
+    listOnError: "continue", selectionMode: "loop", groupFormula: "", perRecordLock: false, prevRecord: false,
+    ...over,
+  }],
+});
+
+test("checkConfig: 式の構文が通らなければ invalid（口の名前だけ出し、式は出さない）", { skip }, async () => {
+  // 先頭の " が落ちた結果メッセージ（S3 で実際に書かれた形）
+  const broken = 'この顧客を集計しました（書き込み " & _result_total & " 件）';
+  const r = await core.checkConfig(envelope(formulaAction({ resultMessage: broken })), { pluginZip: ZIP });
+  assert.equal(r.status, "invalid", JSON.stringify(r.findings));
+  const f = r.findings.find((x) => x.code === "pFormulaSyntax");
+  assert.ok(f, JSON.stringify(r.findings));
+  assert.match(f.message, /resultMessage/);
+  assert.equal(f.actionCode, "f1");
+  assert.equal(JSON.stringify(r).includes("この顧客を集計しました"), false, "式そのものが findings に出ている");
+});
+
+test("checkConfig: 項目名・関数名は構文の検査で誤りにしない（項目定義は段階 3）", { skip }, async () => {
+  const r = await core.checkConfig(envelope(formulaAction({
+    showCond: '処理状況 <> "済"',
+    execCond: 'LEN(顧客コード) > 0',
+    resultMessage: '"書き込み " & _result_total & " 件"',
+  })), { pluginZip: ZIP });
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+});
+
+test("checkConfig: 分ける式の構文も見る（保存のときダイアログを通らない）", { skip }, async () => {
+  const r = await core.checkConfig(envelope(formulaAction({
+    type: "list", placements: ["index_panel"], selectionMode: "group", groupFormula: 'IF(顧客コード <> "", "A", "B"',
+    params: [], sql: "-- @ksql dialect: 1\nDECLARE @_group = '';\nDECLARE @_selected = [];\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 顧客コード = @_group AND $id IN @_selected;",
+  })), { pluginZip: ZIP });
+  assert.equal(r.status, "invalid");
+  assert.ok(r.findings.some((f) => f.code === "pFormulaSyntax" && /groupFormula/.test(f.message)), JSON.stringify(r.findings));
+});

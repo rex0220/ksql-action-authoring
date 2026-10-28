@@ -33,6 +33,34 @@ function scalarDiffs(a: Obj | undefined, b: Obj | undefined, keys: string[], out
 }
 
 /** 封筒 2 つを比べて、人が読む差分の文を返す（同じなら空文字） */
+/**
+ * アクション 1 つ分の差（`kact_diff` と `kact_update_action` が使う）。
+ * `kact_update_action` は同じファイルを書き替えるので、直す前の控えが残らない
+ * （`kact_diff` の `before` に渡せるファイルが無い）。だから更新した側が差を返す（2026-10-28 の試用 S3）。
+ */
+export function actionDiff(code: string, before: Obj | undefined, after: Obj | undefined): string[] {
+  const out: string[] = [];
+  if (!before) {
+    out.push(`アクション ${code}: 追加（${show(after?.type)} / ${show(after?.name)}）`);
+    return out;
+  }
+  if (!after) {
+    out.push(`アクション ${code}: 削除`);
+    return out;
+  }
+  const at = `アクション ${code} / `;
+  scalarDiffs(before, after, ACTION_SCALARS, out, at);
+  for (const k of ACTION_LISTS) if (!same(before[k], after[k])) out.push(`${at}${k}: ${show(before[k])} → ${show(after[k])}`);
+  for (const k of ACTION_TEXTS) {
+    const s1 = String(before[k] ?? "");
+    const s2 = String(after[k] ?? "");
+    if (s1 === s2) continue;
+    out.push(`${at}${k}:`);
+    out.push(formatDiff(lineDiff(s1, s2)));
+  }
+  return out;
+}
+
 export function diffConfigs(before: Obj, after: Obj): string {
   const out: string[] = [];
   for (const k of ENVELOPE_KEYS) if (!same(before[k], after[k])) out.push(`封筒 ${k}: ${show(before[k])} → ${show(after[k])}`);
@@ -50,26 +78,7 @@ export function diffConfigs(before: Obj, after: Obj): string {
   const mapA = new Map(listA.map((r, i) => [key(r, i), r]));
   const mapB = new Map(listB.map((r, i) => [key(r, i), r]));
   for (const code of new Set([...mapA.keys(), ...mapB.keys()])) {
-    const x = mapA.get(code);
-    const y = mapB.get(code);
-    if (!x) {
-      out.push(`アクション ${code}: 追加（${show(y?.type)} / ${show(y?.name)}）`);
-      continue;
-    }
-    if (!y) {
-      out.push(`アクション ${code}: 削除`);
-      continue;
-    }
-    const at = `アクション ${code} / `;
-    scalarDiffs(x, y, ACTION_SCALARS, out, at);
-    for (const k of ACTION_LISTS) if (!same(x[k], y[k])) out.push(`${at}${k}: ${show(x[k])} → ${show(y[k])}`);
-    for (const k of ACTION_TEXTS) {
-      const s1 = String(x[k] ?? "");
-      const s2 = String(y[k] ?? "");
-      if (s1 === s2) continue;
-      out.push(`${at}${k}:`);
-      out.push(formatDiff(lineDiff(s1, s2)));
-    }
+    out.push(...actionDiff(code, mapA.get(code), mapB.get(code)));
   }
   // 並び（コードの順）
   const orderA = listA.map((r, i) => key(r, i)).filter((c) => mapB.has(c));

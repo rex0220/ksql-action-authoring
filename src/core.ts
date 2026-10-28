@@ -95,12 +95,63 @@ export interface CheckResult {
   findings: Finding[];
 }
 
+/** 計算式の口（設定画面の `collectFormulaProblems` と同じ。`where` は利用者に出す名前） */
+function formulaSlots(action: Record<string, unknown>): Array<{ where: string; raw: string }> {
+  const slots: Array<{ where: string; raw: string }> = [
+    { where: "showCond（表示条件）", raw: String(action.showCond ?? "") },
+    { where: "execCond（実行条件）", raw: String(action.execCond ?? "") },
+    { where: "execNgMessage（実行条件 NG のメッセージ）", raw: String(action.execNgMessage ?? "") },
+    { where: "groupFormula（分ける式）", raw: String(action.groupFormula ?? "") },
+    { where: "resultMessage（結果メッセージ）", raw: String(action.resultMessage ?? "") },
+  ];
+  for (const p of (Array.isArray(action.params) ? action.params : []) as Array<Record<string, unknown>>) {
+    if (p.source === "formula") slots.push({ where: `params ${String(p.name ?? "")} の式`, raw: String(p.formula ?? "") });
+  }
+  for (const i of (Array.isArray(action.inputs) ? action.inputs : []) as Array<Record<string, unknown>>) {
+    slots.push({ where: `inputs ${String(i.name ?? "")} の既定値`, raw: String(i.defaultFormula ?? "") });
+  }
+  return slots.filter((s) => s.raw.trim() !== "");
+}
+
+/** 項目定義が無い文脈でも分かる誤り（= 構文）だけを拾う。項目名・関数名の誤りは「項目が無い」と同じ形で出るので除く */
+const UNKNOWN_NAME = /FIELD CODE NOT FOUND/;
+
+/**
+ * 計算式の**構文だけ**を見る（項目定義は要らない）。
+ * 設定画面の `collectFormulaProblems` は項目定義（`loadFormulaContext`）が要るので、
+ * **項目名・関数名が正しいかは段階 3（`kact_fields`）まで見られない**。
+ * ここで拾うのは引用符・括弧の対応のような、項目定義と関係なく分かる誤りだけ。
+ * 2026-10-28 の試用（S3）で、引用符が落ちた `resultMessage` を `ok` で通してしまったため足した。
+ * **findings に式そのものは入れない**（口の名前だけ出す。設定の中身は返さない約束）。
+ */
+function checkFormulaSyntax(engine: Engine, actions: Array<Record<string, unknown>>): Finding[] {
+  if (!engine.api.formulaEngineLoaded()) {
+    return [{ level: "warning", code: "formula-engine-missing", message: "計算式エンジンが読めないので、式の構文は見ていない" }];
+  }
+  const findings: Finding[] = [];
+  const emptyContext = { pp: {}, crec: {} };
+  for (const [i, action] of actions.entries()) {
+    if (action.enabled === false) continue;
+    for (const slot of formulaSlots(action)) {
+      const r = engine.api.checkFormula(emptyContext, slot.raw) as { ok: boolean; msg?: string };
+      if (r.ok || UNKNOWN_NAME.test(r.msg ?? "")) continue;
+      findings.push({
+        level: "error",
+        code: "pFormulaSyntax",
+        message: `${slot.where}: 式の構文が通らない（引用符 " と括弧の対応を確かめる）`,
+        actionIndex: i + 1,
+        actionCode: String(action.code ?? ""),
+      });
+    }
+  }
+  return findings;
+}
+
 /**
  * 設定ファイルの検査（kact_check）。**設定画面の保存と同じ規則**を zip の API で通す。
  * - 形（CONFIG_SCHEMA）と横断の検査（validateConfig）
  * - アクションごとに SQL の検査（checkActionSql。注意も返す）
- * - 計算式（表示条件・実行条件・結果メッセージ・パラメーター・分ける式）は**まだ検査しない**。
- *   設定画面の `collectFormulaProblems` は項目定義（`loadFormulaContext`）が要るので、段階 3（`kact_fields`）で足す
+ * - 計算式は**構文だけ**（`checkFormulaSyntax`）。項目名・関数名が正しいかは項目定義が要るので段階 3（`kact_fields`）で足す
  */
 export async function checkConfig(text: string, opt: LoadEngineOptions = {}): Promise<CheckResult> {
   let engine: Engine;
@@ -146,6 +197,9 @@ export async function checkConfig(text: string, opt: LoadEngineOptions = {}): Pr
     }
     for (const w of r.warnings) findings.push({ level: "warning", code: w.code, message: w.message, ...at });
   }
+
+  // 4 計算式の構文
+  findings.push(...checkFormulaSyntax(engine, actions));
 
   const enabled = actions.filter((a) => a.enabled !== false).length;
   return {

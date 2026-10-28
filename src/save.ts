@@ -14,6 +14,7 @@ import path from "node:path";
 import { acquireLock, cleanupAll, placeNew, tempPathFor, withRetry, FileExistsError, LockBusyError, type Lock } from "./commit-file.ts";
 import { loadEngine, type Engine, type LoadEngineOptions } from "./engine.ts";
 import { checkConfig, type Finding, type ToolStatus } from "./core.ts";
+import { actionDiff } from "./diff.ts";
 import { listWorkspaceFiles, MAX_CONFIG_BYTES, resolveInWorkspace, resolveNewInWorkspace, workspaceDir, WorkspaceError, type WorkspaceFile } from "./workspace.ts";
 
 /** 封筒のキー（これ以外が設定の本体） */
@@ -86,6 +87,11 @@ export interface SaveResult {
   findings: Finding[];
   /** 利用者に伝える一言（決まった文。ファイルの中身・値は入れない） */
   message?: string;
+  /**
+   * 直したアクションの差（`kact_update_action` だけ。変わっていなければ無し）。
+   * 同じファイルを書き替えるので `kact_diff` の `before` が残らないため、ここで返す（2026-10-28 の試用 S3）。
+   */
+  changes?: string;
 }
 
 const fail = (code: string, message: string, status: ToolStatus = "failed"): SaveResult => ({ status, findings: [{ level: "error", code, message }] });
@@ -269,6 +275,7 @@ export async function updateAction(input: UpdateActionInput, opt: LoadEngineOpti
       if (resolveInWorkspace(input.file) !== target) throw new WorkspaceError("書く先が途中で変わった（symlink など）", "outside");
       if (digestOf(readFileSync(target)) !== input.expectedDigest) throw new LockBusyError("確定の直前にファイルが変わった（digest が違う）。kact_actions で読み直してやり直す");
     });
+    const changes = actionDiff(String(input.action.code), at >= 0 ? actions[at] : undefined, next).join("\n");
     return {
       status: "ok",
       path: input.file,
@@ -276,6 +283,7 @@ export async function updateAction(input: UpdateActionInput, opt: LoadEngineOpti
       summary: checked.summary,
       findings: checked.findings,
       message: `${at >= 0 ? "差し替えた" : "足した"}アクション: ${String(input.action.code)}${cleanup.length ? "（一時ファイルかロックを消せなかった。. で始まる同じ名前のファイルを消してよい）" : ""}`,
+      ...(changes ? { changes } : {}),
     };
   } catch (e) {
     return fromCommitError(e);
