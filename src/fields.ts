@@ -10,7 +10,7 @@
  */
 import { readdirSync, renameSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import path from "node:path";
-import type { Finding, ToolStatus } from "./core.ts";
+import type { ConnectionReport, Finding, ToolStatus } from "./core.ts";
 import {
   authFor,
   loadConnections,
@@ -121,6 +121,45 @@ function connectionFor(profile: string | undefined, opt: KintoneOptions): { set:
 
 /** 接続のファイルの警告（権限など）を findings に（パスと値は入らない） */
 const connectionWarnings = (set: ConnectionSet): Finding[] => set.warnings.map((w) => ({ level: "warning" as const, code: "connection", message: w }));
+
+/**
+ * 接続の診断（`kact_status` が使う）。接続のファイルを読んで**使える profile の形だけ**を返す。
+ * kintone には通信しない。**ファイルのパス・中身・秘密の値は返さない**（名前・profile 名・ホストまで）
+ */
+export function connectionReport(opt: KintoneOptions = {}): { report: ConnectionReport; findings: Finding[] } {
+  if (!opt.configFile) {
+    return {
+      report: { configured: false },
+      findings: [{ level: "info", code: "connection-not-configured", message: "kintone の接続のファイルが設定されていない（KACT_KINTONE_CONFIG）。kact_fields / kact_apps は使えない（設定ファイルの検査と保存は使える）" }],
+    };
+  }
+  try {
+    const env = opt.env ?? process.env;
+    const dir = opt.workspaceDir ?? workspaceDir(env);
+    const set = loadConnections(opt.configFile, { workspaceRoots: [dir], env });
+    return {
+      report: {
+        configured: true,
+        fileName: set.fileName,
+        ...(set.defaultProfile !== undefined ? { defaultProfile: set.defaultProfile } : {}),
+        profiles: [...set.profiles.values()].map((p) => ({
+          profile: p.profile,
+          host: p.host,
+          guestSpaceId: p.guestSpaceId,
+          auth: p.auth,
+          tokenApps: p.tokenApps,
+          tokenReady: p.tokenReady,
+          userpassReady: p.userpassReady,
+        })),
+        ...(set.invalid.length ? { invalid: [...set.invalid] } : {}),
+      },
+      findings: connectionWarnings(set),
+    };
+  } catch (e) {
+    const r = fromConnectionError(e);
+    return { report: { configured: true }, findings: r.findings };
+  }
+}
 
 /** テーブルの子も含めて 1 項目 1 行に（値は無い） */
 export function summarizeFields(properties: Record<string, FieldProperty>): FieldSummary[] {

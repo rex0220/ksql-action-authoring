@@ -19,7 +19,7 @@ import { readFileSync } from "node:fs";
 import { checkConfig, listActions, statusOf } from "./core.ts";
 import { resolveInWorkspace, workspaceStatus, WorkspaceError } from "./workspace.ts";
 import { deleteAction, digestOf, filesOf, pullConfig, saveConfig, updateAction } from "./save.ts";
-import { fetchFields, findFieldsFile, listApps, type KintoneOptions } from "./fields.ts";
+import { connectionReport, fetchFields, findFieldsFile, listApps, type KintoneOptions } from "./fields.ts";
 import { diffConfigs } from "./diff.ts";
 import { toolsMeta } from "./meta.ts";
 import { DOCS, indexText, search, sectionKeys, sectionOf, sectionText } from "./docs.ts";
@@ -130,11 +130,17 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
     "kact_status",
     {
       title: "kact: 診断",
-      description: "tools の版と、kSQL アクションプラグインの zip（版・オーサリング API の版・計算式エンジン）の診断。秘密の値は返さない。",
+      description:
+        "tools の版と、kSQL アクションプラグインの zip（版・オーサリング API の版・計算式エンジン）と、kintone の接続（接続のファイルが読めるか・profile・接続先のホスト・トークンを持つアプリ）の診断。" +
+        "**秘密の値もファイルのパスも返さない**。kintone には通信しない。",
       inputSchema: {},
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async () => json({ surface, ...(await statusOf(zipOptions())) }),
+    async () => {
+      const conn = connectionReport(kintoneOptions());
+      const r = await statusOf({ ...zipOptions(), connection: conn.report });
+      return json({ surface, ...r, findings: [...r.findings, ...conn.findings] });
+    },
   );
 
   server.registerTool(

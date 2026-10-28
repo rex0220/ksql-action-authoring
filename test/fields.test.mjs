@@ -177,3 +177,26 @@ test("findFieldsFile: profile が分からなくても控えを見つける", { 
   assert.equal(found.file.appId, 1001);
   assert.equal(fields.findFieldsFile(9999, ws), undefined);
 });
+
+test("connectionReport: 読めた profile の形だけを返す（秘密の値もパスも出さない）", { skip }, async () => {
+  const r = fields.connectionReport(opt());
+  assert.equal(r.report.configured, true);
+  assert.equal(r.report.fileName, "kintone-connections.json");
+  assert.equal(r.report.defaultProfile, "dev");
+  const dev = r.report.profiles.find((p) => p.profile === "dev");
+  assert.equal(dev.host, "example.cybozu.com");
+  assert.equal(dev.auth, "token");
+  assert.deepEqual(dev.tokenApps, [1001]);
+  assert.equal(dev.tokenReady[1001], true);
+  const text = JSON.stringify(r);
+  assert.equal(text.includes("t0ken"), false, "トークンの値が出ている");
+  assert.equal(text.includes(outside), false, "接続のファイルのパスが出ている");
+  assert.equal(text.includes("KACT_TEST_TOKEN"), false, "環境変数の名前が出ている");
+});
+
+test("connectionReport: 設定が無ければ configured: false（検査と保存は使える）", { skip }, async () => {
+  const r = fields.connectionReport({ env, workspaceDir: ws });
+  assert.equal(r.report.configured, false);
+  assert.equal(r.findings[0].code, "connection-not-configured");
+  assert.equal(r.findings[0].level, "info");
+});

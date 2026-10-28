@@ -72,6 +72,10 @@ kintone に送るのは `kact_fields` / `kact_apps` の **GET** だけで、送�
 
 ### kintone の接続（`kact_fields` / `kact_apps` だけが使う）
 
+接続のファイルは **kSQL の `ksql.config.json` と同じ形**です（計算式プラグイン・印刷屋のオーサリングと共通）。
+**kSQL（kSQL Dashboard Pro など）を使っていれば、その `ksql.config.json` をそのまま使えます。**
+無ければ `kintone-connections.example.json` を写して、**作業フォルダーの外**に置いてください（例 `~/kintone-connections.json`）。
+
 ```jsonc
 {
   "defaultProfile": "dev",
@@ -83,6 +87,9 @@ kintone に送るのは `kact_fields` / `kact_apps` の **GET** だけで、送�
   }
 }
 ```
+
+読めているかは **`kact_status`** で分かります（接続のファイルの名前・profile・接続先のホスト・トークンを持つアプリと、それが使える状態かまで。
+**パスも秘密の値も出しません**）。設定が無くても、設定ファイルの検査と保存（`kact_check` / `kact_save_config` など）は使えます。
 
 - 読むキーは `defaultProfile` と `profiles.<名前>` の `baseUrl` / `guestSpaceId` / `auth` / `username` / `password` / `passwordEnv` / `tokenMap` だけ（kSQL のほかのキーは読まずに通す）。
 - 読む環境変数は、**このファイルが名前を書いた `env:` と `passwordEnv` だけ**。

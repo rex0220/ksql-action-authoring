@@ -1,0 +1,17 @@
+{
+  "defaultProfile": "dev",
+  "profiles": {
+    "dev": {
+      "baseUrl": "https://dev-example.cybozu.com",
+      "tokenMap": {
+        "APP1001": "env:KACT_TOKEN_APP1001",
+        "APP1002": "env:KACT_TOKEN_APP1002"
+      }
+    },
+    "prod": {
+      "baseUrl": "https://example.cybozu.com",
+      "username": "authoring-reader",
+      "passwordEnv": "KACT_PASSWORD_PROD"
+    }
+  }
+}

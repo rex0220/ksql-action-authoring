@@ -39,12 +39,39 @@ export interface StatusResult {
     /** 計算式エンジンが使えるか */
     formulaEngine: boolean;
   };
+  /**
+   * kintone の接続の診断（段階 3）。**秘密の値は出さない**: 出すのはファイルの名前（パスは出さない）、
+   * profile の名前、接続先のホスト、認証の種類、トークンを持つアプリの番号と、それが使える状態か、まで
+   */
+  connection?: ConnectionReport;
   findings: Finding[];
 }
 
-/** zip と tools の診断（kact_status）。zip の場所は呼び出し側が決めて渡す */
-export async function statusOf(opt: LoadEngineOptions = {}): Promise<StatusResult> {
+export interface ConnectionReport {
+  /** 接続のファイルが設定されているか（`KACT_KINTONE_CONFIG`） */
+  configured: boolean;
+  /** 読めたファイルの名前（パスは出さない） */
+  fileName?: string;
+  defaultProfile?: string;
+  profiles?: Array<{
+    profile: string;
+    host: string;
+    guestSpaceId: number | null;
+    auth: "token" | "userpass";
+    /** トークンを持つアプリの番号（値は持たない） */
+    tokenApps: number[];
+    /** アプリごとに、トークンが使える状態か（env: の変数があるか） */
+    tokenReady: Record<number, boolean>;
+    userpassReady: boolean;
+  }>;
+  /** 使えない profile と理由（値は含まない） */
+  invalid?: Array<{ name: string; reason: string }>;
+}
+
+/** zip と tools の診断（kact_status）。zip の場所と接続のファイルの場所は呼び出し側が決めて渡す */
+export async function statusOf(opt: LoadEngineOptions & { connection?: ConnectionReport } = {}): Promise<StatusResult> {
   const tools = toolsMeta();
+  const connection = opt.connection ? { connection: opt.connection } : {};
   try {
     const engine = await loadEngine(opt);
     const findings: Finding[] = engine.warnings.map((w) => ({ level: "warning" as const, code: "zip-warning", message: w }));
@@ -58,6 +85,7 @@ export async function statusOf(opt: LoadEngineOptions = {}): Promise<StatusResul
         sha256: { engine: engine.source.engineSha256, ...(engine.source.apiSha256 ? { api: engine.source.apiSha256 } : {}) },
         formulaEngine: engine.api.formulaEngineLoaded(),
       },
+      ...connection,
       findings,
     };
   } catch (e) {
@@ -65,6 +93,7 @@ export async function statusOf(opt: LoadEngineOptions = {}): Promise<StatusResul
     return {
       status: info && (info.code === "unsupported-version" || info.code === "api-unsupported") ? "incompatible" : "failed",
       tools,
+      ...connection,
       findings: [{ level: "error", code: info?.code ?? "engine-load-failed", message: e instanceof Error ? e.message : String(e) }],
     };
   }
