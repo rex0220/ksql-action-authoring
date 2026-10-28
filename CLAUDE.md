@@ -20,6 +20,14 @@
   本体が API の名前や引数を変えて版を上げたら、ここに足して試験を流す。
 - `MIN_PLUGIN_VERSION` は、オーサリング API を同梱した最初のプラグインの版（Ver.1）。
 
+## 保存の約束（段階 2）
+
+- 作業フォルダーのファイルを書くのは `src/save.ts` だけ（`kact_save_config` / `kact_update_action` / `kact_pull`）。
+  確定とロックは `src/commit-file.ts`（**印刷屋の tools からの写し。あちらが正本**）。新しい書き込みを足すときもここを通す。
+- **新規は上書きしない・更新は `expectedDigest`・検査のエラーがあれば書かない**（README の「保存の約束」）。
+  この 3 つは試験（`test/save.test.mjs`）で守る。
+- 作業フォルダーの外は `denied`。パスの判定は `src/workspace.ts`（読みは `resolveInWorkspace`、書きは `resolveNewInWorkspace`）。
+
 ## 資料（`docs/`）
 
 - `kact_docs` が返す章は `docs/manifest.json` の `sections`（key = section の名前）。Markdown を足したら manifest にも足す。
@@ -30,6 +38,6 @@
 
 ## 写し元
 
-`src/plugin-zip.ts` / `src/engine.ts` / `src/meta.ts` / `src/paths.ts` は、**印刷屋のオーサリング tools（`print-craft-authoring/tools`。MIT・同じ作者）から写して直したもの**です。
-zip の読み取り（2 層・zip bomb・CRC の確認）と、エンジンの読み込み（happy-dom、`moment` → `moment-timezone` → `bignumber` → 計算式エンジン → オーサリング API の順、`kintone` と `cybozu` のスタブ）の作りは向こうが正本です。
+`src/plugin-zip.ts` / `src/engine.ts` / `src/meta.ts` / `src/paths.ts` / `src/commit-file.ts` / `src/line-diff.ts` は、**印刷屋のオーサリング tools（`print-craft-authoring/tools`。MIT・同じ作者）から写して直したもの**です（`commit-file.ts` はロックの名前だけ、`line-diff.ts` はそのまま）。
+zip の読み取り（2 層・zip bomb・CRC の確認）、エンジンの読み込み（happy-dom、`moment` → `moment-timezone` → `bignumber` → 計算式エンジン → オーサリング API の順、`kintone` と `cybozu` のスタブ）、**ファイルの確定とロック**の作りは向こうが正本です（Codex のレビューを何度も通している）。
 直すときは向こうの変更も見る。

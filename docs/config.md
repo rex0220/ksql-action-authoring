@@ -38,6 +38,8 @@
 | `listBulkMax` | 300 | 一覧の選択の上限（「まとめて 1 回」は min(これ, 200)） |
 | `applySubtableMax` | 500 | **APPLY で変わる子行の上限**（1 文。`REMOVE ALL ROWS` で消える既存行も数える） |
 
+**`kact_save_config` は足りないキーを本体の既定値で埋めます**（`configVersion` / `limits` / アクションの各キー）。変えるところだけ渡してください。
+
 ## アクション（`actions` の 1 要素）
 
 ```json
@@ -81,7 +83,7 @@
 | `params` | `[{ name, source, formula }]` | `source` は `"formula"` か `"input"`。SQL の `DECLARE` と**過不足なく 1 対 1** |
 | `inputs` | `[{ name, label, type, required, defaultFormula, options }]` | 実行時に聞く値。`type` は `text` / `number` / `date` / `datetime` / `select` / `relative_date`。**イベント起動には持てない** |
 | `sql` | Flow dialect 1 | 1 本 20,000 字・20 文まで（`sql`） |
-| `staticInsertRows` | 整数 | 素の `INSERT … VALUES` の行数（保存時にプラグインが数える。**AI は 0 のままでよい**） |
+| `staticInsertRows` | 整数 | 素の `INSERT … VALUES` の行数。**保存のときにプラグインが数え直して上書きする**ので、AI は書かなくてよい |
 | `confirm` | 真偽 | 既定 `true`（件数の確認）。`false` にすると `writeLimit` が**必須** |
 | `writeLimit` | 整数（0 = 無し） | 起動 1 回で書いてよい合計件数 |
 | `allowed` | `[{ type, code, name? }]` | `type` は `USER` / `GROUP` / `ORGANIZATION`。空 = 全員。**誤操作防止**で、セキュリティ境界ではない |

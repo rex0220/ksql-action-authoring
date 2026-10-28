@@ -17,6 +17,8 @@ import { z } from "zod";
 import { readFileSync } from "node:fs";
 import { checkConfig, listActions, statusOf } from "./core.ts";
 import { resolveInWorkspace, workspaceStatus, WorkspaceError } from "./workspace.ts";
+import { digestOf, filesOf, pullConfig, saveConfig, updateAction } from "./save.ts";
+import { diffConfigs } from "./diff.ts";
 import { toolsMeta } from "./meta.ts";
 import { DOCS, indexText, search, sectionKeys, sectionOf, sectionText } from "./docs.ts";
 
@@ -147,14 +149,110 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
     "kact_actions",
     {
       title: "kact: アクションの一覧",
-      description: "設定ファイルの中身を 1 アクション 1 行で返す（種類・起動・選択の渡し方・APPLY の有無・パラメーター名・SQL の行数）。SQL 本文と値は返さない。",
+      description:
+        "設定ファイルの中身を 1 アクション 1 行で返す（種類・起動・選択の渡し方・APPLY の有無・パラメーター名・SQL の行数）。SQL 本文と値は返さない。" +
+        "返りの digest は kact_update_action の expectedDigest に渡す値。",
       inputSchema: { file: z.string().describe("作業フォルダーからの相対パス") },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ file }) => {
       const r = readWorkspaceFile(file);
       if (!r.ok) return r.result;
-      return json(await listActions(r.text, zipOptions()));
+      return json({ ...(await listActions(r.text, zipOptions())), digest: digestOf(r.text) });
+    },
+  );
+
+  server.registerTool(
+    "kact_files",
+    {
+      title: "kact: 作業フォルダーのファイル",
+      description:
+        "作業フォルダーの JSON の一覧。kSQL アクションの設定ファイルには digest（kact_update_action に渡す値）とアクションの数・アプリ ID も付く。中身は返さない。",
+      inputSchema: {},
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => json(await filesOf(zipOptions())),
+  );
+
+  server.registerTool(
+    "kact_save_config",
+    {
+      title: "kact: 新しい設定を保存",
+      description:
+        "新しい設定ファイル（設定画面にアップロードする封筒形式）を作業フォルダーに保存する。**保存の前にプラグイン本体と同じ検査を通し、エラーがあれば書かない**。" +
+        "既にあるファイルは上書きしない（同じ名前なら conflict）。足りないキーは本体の既定値で埋まるので、変えるところだけ渡せばよい。",
+      inputSchema: {
+        file: z.string().min(1).max(200).describe("作業フォルダーからの相対パス（.json。例 settings/kact-1001.json）"),
+        appId: z.number().int().positive().describe("取り込む先のアプリ ID（推測せず利用者に聞く）"),
+        appName: z.string().max(200).optional().describe("アプリ名（封筒の表示だけに使う）"),
+        config: z.record(z.unknown()).describe("設定の本体（configVersion / bindings / limits / timezone / actions）か封筒ごと。形は kact_docs の section config"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ file, appId, appName, config }) => json(await saveConfig({ file, appId, appName, config }, zipOptions())),
+  );
+
+  server.registerTool(
+    "kact_update_action",
+    {
+      title: "kact: アクションを差し替える・足す",
+      description:
+        "既存の設定ファイルのアクションを 1 つ差し替える（同じコードが無ければ末尾に足す）。**kact_actions で読んだ digest を expectedDigest に渡す**（読んだ後に変わっていたら conflict）。" +
+        "書く前に設定全体を本体と同じ規則で検査し、エラーがあれば書かない。",
+      inputSchema: {
+        file: z.string().min(1).max(200).describe("作業フォルダーからの相対パス"),
+        expectedDigest: z.string().min(16).max(128).describe("kact_actions か kact_files が返した digest"),
+        action: z.record(z.unknown()).describe("アクション（code は必須。足りないキーは既定値で埋まる）"),
+        replaceCode: z.string().min(1).max(64).optional().describe("差し替える相手のコード（コードを変えるときだけ。省略すると action.code と同じ行）"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ file, expectedDigest, action, replaceCode }) => json(await updateAction({ file, expectedDigest, action, replaceCode }, zipOptions())),
+  );
+
+  server.registerTool(
+    "kact_pull",
+    {
+      title: "kact: ダウンロードした設定を取り込む",
+      description:
+        "設定画面の［設定をダウンロード］で取った設定ファイルを、作業フォルダーに写す（直すときの元）。**元のファイルは残す**。" +
+        "kSQL アクションの設定でなければ写さない。写す先に同じ名前があれば conflict。",
+      inputSchema: {
+        from: z.string().min(1).max(200).describe("ダウンロードしたファイル（作業フォルダーからの相対パス。例 inbox/kact-app1001.json）"),
+        to: z.string().min(1).max(200).optional().describe("写す先（省略すると settings/APP<アプリ ID>.json）"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ from, to }) => json(await pullConfig({ from, to }, zipOptions())),
+  );
+
+  server.registerTool(
+    "kact_diff",
+    {
+      title: "kact: 2 つの設定の差",
+      description:
+        "2 つの設定ファイルの差を、取り込む前に人が見る形で返す（アクションはコードで対応付け、SQL と計算式は変わった行だけ、そのほかは 古い → 新しい）。",
+      inputSchema: {
+        before: z.string().min(1).max(200).describe("前の設定（作業フォルダーからの相対パス）"),
+        after: z.string().min(1).max(200).describe("後の設定（作業フォルダーからの相対パス）"),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ before, after }) => {
+      const a = readWorkspaceFile(before);
+      if (!a.ok) return a.result;
+      const b = readWorkspaceFile(after);
+      if (!b.ok) return b.result;
+      let diff: string;
+      try {
+        const x: unknown = JSON.parse(a.text);
+        const y: unknown = JSON.parse(b.text);
+        if (!x || typeof x !== "object" || !y || typeof y !== "object") throw new Error("設定ファイルがオブジェクトでない");
+        diff = diffConfigs(x as Record<string, unknown>, y as Record<string, unknown>);
+      } catch (e) {
+        return json({ status: "invalid", findings: [{ level: "error", code: "parse-failed", message: e instanceof Error ? e.message : String(e) }] });
+      }
+      return text(diff ? `${before} → ${after}\n\n${diff}` : `${before} と ${after} に差は無い`);
     },
   );
 

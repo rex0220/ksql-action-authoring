@@ -12,7 +12,8 @@ import { loadEngine, type Engine, type LoadEngineOptions } from "./engine.ts";
 import { PluginZipError } from "./plugin-zip.ts";
 import { toolsMeta } from "./meta.ts";
 
-export type ToolStatus = "ok" | "invalid" | "incompatible" | "failed";
+/** 返りの状態（印刷屋の MCP と同じ語。conflict と denied は段階 2 の保存で使う） */
+export type ToolStatus = "ok" | "invalid" | "incompatible" | "conflict" | "denied" | "failed";
 
 export interface Finding {
   /** error = 保存できない / warning = 保存はできる注意 / info = 参考 */

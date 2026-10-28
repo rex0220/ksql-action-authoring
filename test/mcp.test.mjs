@@ -51,10 +51,17 @@ after(async () => {
 });
 const call = async (client, name, args = {}) => JSON.parse((await client.callTool({ name, arguments: args })).content[0].text);
 
-test("ツールが 5 本出る（読み取り専用の注釈つき）", { skip }, async () => {
+test("ツールが 10 本出る（読み取り専用の注釈つき）", { skip }, async () => {
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((t) => t.name).sort(), ["kact_actions", "kact_check", "kact_docs", "kact_status", "kact_workspace_status"]);
-  for (const t of tools) assert.equal(t.annotations?.readOnlyHint, true, `${t.name} に readOnlyHint が無い`);
+  assert.deepEqual(tools.map((t) => t.name).sort(), [
+    "kact_actions", "kact_check", "kact_diff", "kact_docs", "kact_files",
+    "kact_pull", "kact_save_config", "kact_status", "kact_update_action", "kact_workspace_status",
+  ]);
+  const readOnly = new Set(["kact_docs", "kact_status", "kact_workspace_status", "kact_check", "kact_actions", "kact_files", "kact_diff"]);
+  for (const t of tools) {
+    assert.equal(t.annotations?.readOnlyHint, readOnly.has(t.name), `${t.name} の readOnlyHint が違う`);
+    assert.equal(t.annotations?.openWorldHint, false, `${t.name} に openWorldHint: false が無い`);
+  }
 });
 
 test("kact_status: zip の版と API の版を返す", { skip }, async () => {
@@ -136,4 +143,54 @@ test("kact_status: tools の版と対応する API の版を返す", { skip }, a
   assert.equal(r.tools.mode, "build");
   assert.deepEqual(r.tools.supportedApiVersions, [1]);
   assert.equal(r.tools.pluginId, "afkekkiffjhdkcepekecalklafjhbcmf");
+});
+
+test("kact_save_config → kact_actions → kact_update_action が digest でつながる", { skip }, async () => {
+  const config = {
+    bindings: [{ name: "受注", appId: 1001 }],
+    actions: [{
+      code: "mcp1", name: "MCP から", type: "record", placements: ["detail_menu"],
+      params: [{ name: "cust", source: "formula", formula: "顧客コード" }],
+      sql: "-- @ksql dialect: 1\nDECLARE @cust = '';\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 顧客コード = @cust;",
+    }],
+  };
+  const saved = await call(client, "kact_save_config", { file: "settings/from-mcp.json", appId: 1001, appName: "受注", config });
+  assert.equal(saved.status, "ok", JSON.stringify(saved.findings));
+
+  const listed = await call(client, "kact_actions", { file: "settings/from-mcp.json" });
+  assert.equal(listed.digest, saved.digest, "kact_actions の digest が保存した digest と同じ");
+  assert.equal(listed.actions.length, 1);
+
+  const updated = await call(client, "kact_update_action", {
+    file: "settings/from-mcp.json", expectedDigest: listed.digest,
+    action: { code: "mcp1", name: "MCP から（直した）", writeLimit: 10 },
+  });
+  assert.equal(updated.status, "ok", JSON.stringify(updated.findings));
+
+  const stale = await call(client, "kact_update_action", {
+    file: "settings/from-mcp.json", expectedDigest: listed.digest, action: { code: "mcp1", name: "入れ替わらない" },
+  });
+  assert.equal(stale.status, "conflict");
+});
+
+test("kact_files: 作業フォルダーの JSON と digest", { skip }, async () => {
+  const r = await call(client, "kact_files");
+  assert.equal(r.status, "ok");
+  const paths = r.files.map((f) => f.path);
+  assert.ok(paths.includes("settings.json"), JSON.stringify(paths));
+  assert.ok(paths.includes("settings/from-mcp.json"));
+  assert.equal(r.files.find((f) => f.path === "broken.json").kact, false);
+});
+
+test("kact_diff: 2 つの設定の差（SQL の行だけ）", { skip }, async () => {
+  const t = (await client.callTool({ name: "kact_diff", arguments: { before: "settings.json", after: "settings/from-mcp.json" } })).content[0].text;
+  assert.match(t, /アクション mark: 削除/);
+  assert.match(t, /アクション mcp1: 追加/);
+});
+
+test("作業フォルダーの外には書けない（kact_save_config）", { skip }, async () => {
+  for (const file of ["/tmp/kact-mcp-outside.json", "../outside.json"]) {
+    const r = await call(client, "kact_save_config", { file, appId: 1001, config: { actions: [] } });
+    assert.equal(r.status, "denied", `${file}: ${JSON.stringify(r)}`);
+  }
 });
