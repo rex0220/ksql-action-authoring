@@ -16,6 +16,14 @@ export class WorkspaceError extends Error {
   }
 }
 
+/** 子が親の中か（接続のファイルが作業フォルダーの外にあることの確認にも使う。印刷屋の safe-path と同じ判定） */
+export function isInside(child: string, parent: string): boolean {
+  const norm = (p: string): string => path.resolve(p);
+  const c = norm(child);
+  const p = norm(parent);
+  return c === p || c.startsWith(p.endsWith(path.sep) ? p : p + path.sep);
+}
+
 /** 起動の設定から作業フォルダーを決める（`KACT_WORKSPACE`。無ければ今のフォルダー） */
 export function workspaceDir(env: NodeJS.ProcessEnv = process.env): string {
   const dir = env.KACT_WORKSPACE?.trim() || process.cwd();

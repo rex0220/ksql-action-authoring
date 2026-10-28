@@ -54,16 +54,18 @@ after(async () => {
 });
 const call = async (client, name, args = {}) => JSON.parse((await client.callTool({ name, arguments: args })).content[0].text);
 
-test("ツールが 11 本出る（読み取り専用の注釈つき）", { skip }, async () => {
+test("ツールが 13 本出る（読み取り専用の注釈つき）", { skip }, async () => {
   const { tools } = await client.listTools();
   assert.deepEqual(tools.map((t) => t.name).sort(), [
-    "kact_actions", "kact_check", "kact_delete_action", "kact_diff", "kact_docs", "kact_files",
+    "kact_actions", "kact_apps", "kact_check", "kact_delete_action", "kact_diff", "kact_docs", "kact_fields", "kact_files",
     "kact_pull", "kact_save_config", "kact_status", "kact_update_action", "kact_workspace_status",
   ]);
-  const readOnly = new Set(["kact_docs", "kact_status", "kact_workspace_status", "kact_check", "kact_actions", "kact_files", "kact_diff"]);
+  const readOnly = new Set(["kact_docs", "kact_status", "kact_workspace_status", "kact_check", "kact_actions", "kact_files", "kact_diff", "kact_apps"]);
+  // kintone に通信するのは段階 3 の 2 本だけ（ほかは zip と作業フォルダーだけ）
+  const openWorld = new Set(["kact_fields", "kact_apps"]);
   for (const t of tools) {
     assert.equal(t.annotations?.readOnlyHint, readOnly.has(t.name), `${t.name} の readOnlyHint が違う`);
-    assert.equal(t.annotations?.openWorldHint, false, `${t.name} に openWorldHint: false が無い`);
+    assert.equal(t.annotations?.openWorldHint, openWorld.has(t.name), `${t.name} の openWorldHint が違う`);
   }
 });
 

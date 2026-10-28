@@ -91,6 +91,8 @@ export interface CheckResult {
     logApp: boolean;
     /** アクションごとの SQL の行数 */
     sqlLines: number[];
+    /** 計算式をどこまで見たか（`fields` = 項目コード・関数名まで、`syntax` = 引用符と括弧の対応だけ） */
+    formulaCheck?: "fields" | "syntax";
   };
   findings: Finding[];
 }
@@ -125,29 +127,59 @@ const UNKNOWN_NAME = /FIELD CODE NOT FOUND:\s*([\s\S]*)$/;
  */
 const NOT_A_FIELD_CODE = /[\s"'。、，．！？!?]/;
 
+/** 計算式の文脈（`loadFormulaContext` が作る形。アクションの種類で使い分ける） */
+interface FormulaContexts {
+  record: { pp: unknown; crec: unknown };
+  none: { pp: unknown; crec: unknown };
+  result: (base: "record" | "none") => { pp: unknown; crec: unknown };
+}
+
 /**
- * 計算式の**構文だけ**を見る（項目定義は要らない）。
- * 設定画面の `collectFormulaProblems` は項目定義（`loadFormulaContext`）が要るので、
- * **項目名・関数名が正しいかは段階 3（`kact_fields`）まで見られない**。
- * ここで拾うのは引用符・括弧の対応のような、項目定義と関係なく分かる誤りだけ。
- * 2026-10-28 の試用（S3）で、引用符が落ちた `resultMessage` を `ok` で通してしまったため足した。
+ * 項目定義から計算式の文脈を作る（**本体の `loadFormulaContext` をそのまま使う**。項目の型から検査用のレコードを組む
+ * ところを写さないため）。`loadFormulaContext` は `/k/v1/preview/app/form/fields` を 1 回だけ読むので、
+ * kintone に行かず控え（`kact_fields` が置いた properties）を返す偽の client を渡す。
+ */
+async function contextsFrom(engine: Engine, properties: Record<string, unknown>, appId: number): Promise<FormulaContexts> {
+  const client = { api: async () => ({ properties }) };
+  return (await engine.api.loadFormulaContext(client as never, appId)) as unknown as FormulaContexts;
+}
+
+/** 項目定義が無い文脈でも分かる誤り（= 構文）だけを拾う。項目名・関数名の誤りは「項目が無い」と同じ形で出るので除く */
+const UNKNOWN_NAME_RE = UNKNOWN_NAME;
+
+/**
+ * 計算式を見る。
+ * - **項目定義が無いとき（`contexts` なし）は構文だけ**（引用符・括弧の対応）。項目名・関数名は「項目が無い」と
+ *   同じ形で返るので区別できない（2026-10-28 の試用 S3 で、引用符が落ちた `resultMessage` が通っていたため足した）
+ * - **項目定義があるとき（`kact_fields` の控え）は設定画面の保存と同じ検査**（`collectFormulaProblems` と同じ口・
+ *   同じ文脈の使い分け）。項目コードと関数名の誤りもここで止まる
  * **findings に式そのものは入れない**（口の名前だけ出す。設定の中身は返さない約束）。
  */
-function checkFormulaSyntax(engine: Engine, actions: Array<Record<string, unknown>>): Finding[] {
+function checkFormulas(engine: Engine, actions: Array<Record<string, unknown>>, contexts?: FormulaContexts): Finding[] {
   if (!engine.api.formulaEngineLoaded()) {
-    return [{ level: "warning", code: "formula-engine-missing", message: "計算式エンジンが読めないので、式の構文は見ていない" }];
+    return [{ level: "warning", code: "formula-engine-missing", message: "計算式エンジンが読めないので、式は見ていない" }];
   }
   const findings: Finding[] = [];
   const emptyContext = { pp: {}, crec: {} };
   for (const [i, action] of actions.entries()) {
     if (action.enabled === false) continue;
+    const at = { actionIndex: i + 1, actionCode: String(action.code ?? "") };
+    // 設定画面の baseKey と同じ: アプリ種別と「まとめて 1 回 / グループごと」はレコード文脈が無い
+    const noRecord = action.type === "app" || engine.api.isSelectionNoRecord(action as never);
+    const base: "record" | "none" = noRecord ? "none" : "record";
     for (const slot of formulaSlots(action)) {
-      const r = engine.api.checkFormula(emptyContext, slot.raw) as { ok: boolean; msg?: string };
+      const context = !contexts
+        ? emptyContext
+        : slot.where.startsWith("resultMessage")
+          ? contexts.result(base)
+          : slot.where.startsWith("groupFormula")
+            ? contexts.record // 分ける式はレコードごとに評価する
+            : contexts[base];
+      const r = engine.api.checkFormula(context, slot.raw) as { ok: boolean; msg?: string };
       if (r.ok) continue;
-      const at = { actionIndex: i + 1, actionCode: String(action.code ?? "") };
-      const unknown = UNKNOWN_NAME.exec(r.msg ?? "");
-      if (unknown) {
-        // 項目名・関数名の誤りは段階 3 まで区別できない。ただし項目コードに入らない文字が混じっていれば引用符の抜け
+      const unknown = UNKNOWN_NAME_RE.exec(r.msg ?? "");
+      if (unknown && !contexts) {
+        // 項目名・関数名の誤りは項目定義が無いと区別できない。ただし項目コードに入らない文字が混じっていれば引用符の抜け
         if (NOT_A_FIELD_CODE.test(unknown[1] ?? "")) {
           findings.push({
             level: "warning",
@@ -156,6 +188,16 @@ function checkFormulaSyntax(engine: Engine, actions: Array<Record<string, unknow
             ...at,
           });
         }
+        continue;
+      }
+      if (unknown) {
+        // 項目定義があるので「項目が無い」は本当の誤り（名前だけ出す。式は出さない）
+        findings.push({
+          level: "error",
+          code: "pFormulaField",
+          message: `${slot.where}: 「${(unknown[1] ?? "").slice(0, 64)}」という項目も関数も無い（項目コードで書く。表示名ではない。使えない文脈のことも）`,
+          ...at,
+        });
         continue;
       }
       findings.push({
@@ -169,13 +211,23 @@ function checkFormulaSyntax(engine: Engine, actions: Array<Record<string, unknow
   return findings;
 }
 
+export interface CheckOptions extends LoadEngineOptions {
+  /**
+   * 自アプリの項目定義（`kact_fields` が置いた控えの `properties`）。渡すと計算式を
+   * **設定画面の保存と同じ検査**（項目コード・関数名まで）に上げる。無ければ構文だけ見る
+   */
+  fields?: Record<string, unknown>;
+  /** 項目定義を渡すときの自アプリの番号（`loadFormulaContext` に渡す。省略時は封筒の appId） */
+  appId?: number;
+}
+
 /**
  * 設定ファイルの検査（kact_check）。**設定画面の保存と同じ規則**を zip の API で通す。
  * - 形（CONFIG_SCHEMA）と横断の検査（validateConfig）
  * - アクションごとに SQL の検査（checkActionSql。注意も返す）
- * - 計算式は**構文だけ**（`checkFormulaSyntax`）。項目名・関数名が正しいかは項目定義が要るので段階 3（`kact_fields`）で足す
+ * - 計算式は、項目定義（`fields`）を渡せば**設定画面の保存と同じ検査**、無ければ**構文だけ**（`checkFormulas`）
  */
-export async function checkConfig(text: string, opt: LoadEngineOptions = {}): Promise<CheckResult> {
+export async function checkConfig(text: string, opt: CheckOptions = {}): Promise<CheckResult> {
   let engine: Engine;
   try {
     engine = await loadEngine(opt);
@@ -186,8 +238,9 @@ export async function checkConfig(text: string, opt: LoadEngineOptions = {}): Pr
 
   const findings: Finding[] = [];
   let config: Record<string, unknown>;
+  let envelope: Record<string, unknown>;
   try {
-    ({ config } = parseConfigFile(engine, text));
+    ({ config, envelope } = parseConfigFile(engine, text));
   } catch (e) {
     return { status: "invalid", findings: [{ level: "error", code: "parse-failed", message: e instanceof Error ? e.message : String(e) }] };
   }
@@ -220,8 +273,21 @@ export async function checkConfig(text: string, opt: LoadEngineOptions = {}): Pr
     for (const w of r.warnings) findings.push({ level: "warning", code: w.code, message: w.message, ...at });
   }
 
-  // 4 計算式の構文
-  findings.push(...checkFormulaSyntax(engine, actions));
+  // 4 計算式（項目定義があれば設定画面と同じ検査、無ければ構文だけ）
+  let contexts: FormulaContexts | undefined;
+  if (opt.fields) {
+    const appId = opt.appId ?? Number(envelope.appId ?? 0);
+    if (!Number.isSafeInteger(appId) || appId <= 0) {
+      findings.push({ level: "warning", code: "fields-no-app", message: "項目定義を渡されたが自アプリの番号が分からないので、計算式は構文だけ見た" });
+    } else {
+      try {
+        contexts = await contextsFrom(engine, opt.fields, appId);
+      } catch (e) {
+        findings.push({ level: "warning", code: "fields-context-failed", message: `項目定義から計算式の文脈を作れなかったので構文だけ見た: ${e instanceof Error ? e.message : String(e)}` });
+      }
+    }
+  }
+  findings.push(...checkFormulas(engine, actions, contexts));
 
   const enabled = actions.filter((a) => a.enabled !== false).length;
   return {
@@ -232,6 +298,8 @@ export async function checkConfig(text: string, opt: LoadEngineOptions = {}): Pr
       bindings: bindings.map((b) => `${b.name}=${b.appId}`),
       logApp: !!config.logApp,
       sqlLines: actions.map((a) => String(a.sql ?? "").split("\n").length),
+      /** 計算式をどこまで見たか（項目コードまで見たか、構文だけか） */
+      formulaCheck: contexts ? "fields" : "syntax",
     },
     findings,
   };

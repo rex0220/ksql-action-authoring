@@ -38,6 +38,15 @@
 
 ## 写し元
 
-`src/plugin-zip.ts` / `src/engine.ts` / `src/meta.ts` / `src/paths.ts` / `src/commit-file.ts` / `src/line-diff.ts` は、**印刷屋のオーサリング tools（`print-craft-authoring/tools`。MIT・同じ作者）から写して直したもの**です（`commit-file.ts` はロックの名前だけ、`line-diff.ts` はそのまま）。
-zip の読み取り（2 層・zip bomb・CRC の確認）、エンジンの読み込み（happy-dom、`moment` → `moment-timezone` → `bignumber` → 計算式エンジン → オーサリング API の順、`kintone` と `cybozu` のスタブ）、**ファイルの確定とロック**の作りは向こうが正本です（Codex のレビューを何度も通している）。
+`src/plugin-zip.ts` / `src/engine.ts` / `src/meta.ts` / `src/paths.ts` / `src/commit-file.ts` / `src/line-diff.ts` / `src/connections.ts` / `src/kintone-rest.ts` / `src/kintone-url.ts` は、**印刷屋のオーサリング tools（`print-craft-authoring/tools`。MIT・同じ作者）から写して直したもの**です（`commit-file.ts` はロックの名前だけ、`line-diff.ts` と `kintone-url.ts` はそのまま）。
+zip の読み取り（2 層・zip bomb・CRC の確認）、エンジンの読み込み（happy-dom、`moment` → `moment-timezone` → `bignumber` → `decimal` → 計算式エンジン → オーサリング API の順、`kintone` と `cybozu` のスタブ）、**ファイルの確定とロック**、**接続のファイルの読み取りと GET だけの REST** の作りは向こうが正本です（Codex のレビューを何度も通している）。
 直すときは向こうの変更も見る。
+
+## kintone への通信（段階 3）
+
+- 送るのは **GET だけ**。送れるパスは `src/kintone-rest.ts` の `ALLOWED_APIS`（`app` / `apps` / `app/form/fields` / `preview/app/form/fields`）に固定で、**レコードは読まない**。
+- 接続は `src/connections.ts`（接続のファイルの profile だけ）。**ファイルの場所・中身・秘密の値は返さない**（返すのはファイル名・profile 名・ホストまで）。
+  接続のファイルが**作業フォルダーの中**にあれば `denied`。
+- `kact_fields` が置く `fields/<profile>/APP<番号>.json` は**ツールが作る控え**で、設定ファイルではない（取り直すと上書きする）。
+  控えがあると `kact_check` と保存のツールが計算式を**項目コードまで**検査する（`summary.formulaCheck` が `fields`）。
+  文脈は本体の `loadFormulaContext` に作らせる（検査用レコードの組み立てを写さない）。

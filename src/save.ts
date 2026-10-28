@@ -13,8 +13,9 @@ import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync }
 import path from "node:path";
 import { acquireLock, cleanupAll, placeNew, tempPathFor, withRetry, FileExistsError, LockBusyError, type Lock } from "./commit-file.ts";
 import { loadEngine, type Engine, type LoadEngineOptions } from "./engine.ts";
-import { checkConfig, type Finding, type ToolStatus } from "./core.ts";
+import { checkConfig, type CheckOptions, type Finding, type ToolStatus } from "./core.ts";
 import { actionDiff } from "./diff.ts";
+import { findFieldsFile } from "./fields.ts";
 import { listWorkspaceFiles, MAX_CONFIG_BYTES, resolveInWorkspace, resolveNewInWorkspace, workspaceDir, WorkspaceError, type WorkspaceFile } from "./workspace.ts";
 
 /** 封筒のキー（これ以外が設定の本体） */
@@ -143,9 +144,27 @@ function fromCommitError(e: unknown): SaveResult {
   return fail("write-failed", e instanceof Error ? e.message : String(e));
 }
 
+/**
+ * 項目定義の控え（`kact_fields` が置いたもの）があれば検査に渡す。これで**保存のときも**計算式を
+ * 項目コードまで検査する（設定画面の保存と同じ強さ。段階 3）。控えが無ければ構文だけ。kintone には行かない
+ */
+function withFields(text: string, opt: CheckOptions): CheckOptions {
+  if (opt.fields) return opt;
+  let appId = 0;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (parsed && typeof parsed === "object") appId = Number((parsed as { appId?: unknown }).appId ?? 0);
+  } catch {
+    return opt;
+  }
+  if (!Number.isSafeInteger(appId) || appId <= 0) return opt;
+  const found = findFieldsFile(appId);
+  return found ? { ...opt, fields: found.file.properties, appId } : opt;
+}
+
 /** 検査（設定画面の保存と同じ規則）。エラーがあれば書かない */
-async function checkOrFail(text: string, opt: LoadEngineOptions): Promise<{ ok: true; findings: Finding[]; summary: SaveResult["summary"] } | { ok: false; result: SaveResult }> {
-  const r = await checkConfig(text, opt);
+async function checkOrFail(text: string, opt: CheckOptions): Promise<{ ok: true; findings: Finding[]; summary: SaveResult["summary"] } | { ok: false; result: SaveResult }> {
+  const r = await checkConfig(text, withFields(text, opt));
   if (r.status !== "ok") {
     return { ok: false, result: { status: r.status, findings: r.findings, message: "検査を通らないので書いていない（findings を直してやり直す）" } };
   }

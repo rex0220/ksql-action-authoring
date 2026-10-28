@@ -1,15 +1,16 @@
 /**
- * kact MCP サーバー（段階 1）。ツールの接頭辞は `kact_`。
+ * kact MCP サーバー（段階 3）。ツールの接頭辞は `kact_`。
  *
  * 起動の設定（AI の引数では変えない）:
  * - `--surface claude-code | desktop` … 出すツールの出し分け（印刷屋と同じ。今は同じだが口だけ先に用意する）
  * - 環境変数 `KACT_PLUGIN_ZIP` … kSQL アクションプラグインの zip（検査と計算式エンジンの元）
  * - 環境変数 `KACT_WORKSPACE` … 作業フォルダー（省略時は起動したフォルダー）
+ * - 環境変数 `KACT_KINTONE_CONFIG` … kintone の接続のファイル（kSQL の ksql.config.json と同じ形。**作業フォルダーの外**）
  *
  * 守ること:
- * - **kintone には通信しない**（この段階）。zip と作業フォルダーのファイルだけ
+ * - **kintone へは GET だけ**（`kact_fields` / `kact_apps`。許す API は `kintone-rest.ts` に固定。レコードは読まない）
  * - ファイルは作業フォルダーからの**相対パス**だけ。`..`・絶対パス・symlink の外は拒否
- * - **SQL 本文・値・秘密の値は返さない**（一覧は要約だけ）
+ * - **SQL 本文・値・秘密の値は返さない**（一覧は要約だけ）。接続のファイルの場所と中身も返さない
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -18,6 +19,7 @@ import { readFileSync } from "node:fs";
 import { checkConfig, listActions, statusOf } from "./core.ts";
 import { resolveInWorkspace, workspaceStatus, WorkspaceError } from "./workspace.ts";
 import { deleteAction, digestOf, filesOf, pullConfig, saveConfig, updateAction } from "./save.ts";
+import { fetchFields, findFieldsFile, listApps, type KintoneOptions } from "./fields.ts";
 import { diffConfigs } from "./diff.ts";
 import { toolsMeta } from "./meta.ts";
 import { DOCS, indexText, search, sectionKeys, sectionOf, sectionText } from "./docs.ts";
@@ -42,6 +44,30 @@ function text(t: string): { content: Array<{ type: "text"; text: string }> } {
 function zipOptions(): { pluginZip?: string } {
   const zip = process.env.KACT_PLUGIN_ZIP?.trim();
   return zip ? { pluginZip: zip } : {};
+}
+
+/** kintone の接続（起動の設定だけ。AI の引数では変えない。**場所も値も返さない**） */
+function kintoneOptions(): KintoneOptions {
+  const file = process.env.KACT_KINTONE_CONFIG?.trim();
+  return { ...(file ? { configFile: file } : {}), env: process.env };
+}
+
+/**
+ * 検査のときに使う項目定義（`kact_fields` が置いた控え）。封筒の appId で探す。
+ * あれば計算式を**項目コードまで**検査し、無ければ構文だけ（返りの `summary.formulaCheck` に出る）
+ */
+function checkOptions(text: string): { pluginZip?: string; fields?: Record<string, unknown>; appId?: number; fieldsPath?: string } {
+  const base = zipOptions();
+  let appId = 0;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (parsed && typeof parsed === "object") appId = Number((parsed as { appId?: unknown }).appId ?? 0);
+  } catch {
+    return base;
+  }
+  if (!Number.isSafeInteger(appId) || appId <= 0) return base;
+  const found = findFieldsFile(appId);
+  return found ? { ...base, fields: found.file.properties, appId, fieldsPath: found.path } : base;
 }
 
 /** 作業フォルダーのファイルを読む（パスの検査つき）。失敗は findings の形で返す */
@@ -141,7 +167,8 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
     async ({ file }) => {
       const r = readWorkspaceFile(file);
       if (!r.ok) return r.result;
-      return json(await checkConfig(r.text, zipOptions()));
+      const opt = checkOptions(r.text);
+      return json({ ...(await checkConfig(r.text, opt)), ...(opt.fieldsPath ? { fieldsFrom: opt.fieldsPath } : {}) });
     },
   );
 
@@ -172,6 +199,40 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async () => json(await filesOf(zipOptions())),
+  );
+
+  server.registerTool(
+    "kact_fields",
+    {
+      title: "kact: kintone の項目定義を取る",
+      description:
+        "アプリの項目定義（項目コード・型・ラベル・値の重複を禁止するか・テーブルの子）を kintone から**読み取り（GET）だけ**で取り、作業フォルダーの fields/<profile>/APP<番号>.json に控えて 1 項目 1 行の要約を返す。" +
+        "**SQL と計算式には項目コードを書く**（表示名ではない）。取った後は kact_check と保存のツールが計算式を**項目コードまで検査**する（それまでは引用符・括弧の対応だけ）。" +
+        "レコードの値は読まない。接続は利用者が設定した接続のファイルの profile だけで、ファイルの場所と秘密の値は返さない。結果を推し量らず、このツールで確かめる。",
+      inputSchema: {
+        app: z.number().int().positive().describe("アプリの番号（利用者に聞く。推測しない）"),
+        profile: z.string().min(1).max(40).optional().describe("接続のファイルの profile（省略すると defaultProfile）"),
+        preview: z.boolean().optional().describe("動作テスト環境（保存して未反映）の定義。設定画面が見るのはこちら。API トークンでは読めないことがある"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async ({ app, profile, preview }) => json(await fetchFields({ app, ...(profile ? { profile } : {}), ...(preview ? { preview } : {}) }, kintoneOptions())),
+  );
+
+  server.registerTool(
+    "kact_apps",
+    {
+      title: "kact: アプリの一覧",
+      description:
+        "接続のファイルの profile で見えるアプリの一覧（番号・名前・スペース）を**読み取り（GET）だけ**で返す。**ログイン名とパスワードの接続でだけ**使える（API トークンはアプリごとの鍵なので一覧は読めない）。" +
+        "どのアプリを使うかは一覧から推測せず、**利用者に確かめる**。",
+      inputSchema: {
+        profile: z.string().min(1).max(40).optional().describe("接続のファイルの profile（省略すると defaultProfile）"),
+        limit: z.number().int().min(1).max(100).optional().describe("返す件数（既定 100）"),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ profile, limit }) => json(await listApps({ ...(profile ? { profile } : {}), ...(limit ? { limit } : {}) }, kintoneOptions())),
   );
 
   server.registerTool(

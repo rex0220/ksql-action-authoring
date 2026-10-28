@@ -48,8 +48,11 @@ kintone プラグイン **「kSQL アクション」（rex0220 kSQL Action）** 
 | `kact_update_action` | アクションを 1 つ差し替える・足す（`expectedDigest` で照合。直した差を `changes` で返す） | 作業フォルダー |
 | `kact_delete_action` | アクションを 1 つ消す（`expectedDigest` で照合。最後の 1 件は消せない） | 作業フォルダー |
 | `kact_pull` | 設定画面でダウンロードした設定を作業フォルダーに写す（**元は残す**） | 作業フォルダー |
+| `kact_fields` | kintone の項目定義を**読み取り（GET）だけ**で取り、控えて要約を返す。取った後は計算式を**項目コードまで検査**する | kintone（GET）＋ 作業フォルダー |
+| `kact_apps` | アプリの一覧（**ログイン名とパスワードの接続のときだけ**。API トークンでは読めない） | kintone（GET） |
 
 **kintone には何も書きません。** 書くのは作業フォルダーの中だけで、取り込みと実行は利用者が設定画面で行います。
+kintone に送るのは `kact_fields` / `kact_apps` の **GET** だけで、送れるパスは固定しています（`src/kintone-rest.ts` の `ALLOWED_APIS`。レコードは読みません）。
 
 ### 保存の約束
 
@@ -65,6 +68,26 @@ kintone プラグイン **「kSQL アクション」（rex0220 kSQL Action）** 
 | `--surface claude-code \| desktop` | 出すツールの出し分け |
 | `KACT_PLUGIN_ZIP` | kSQL アクションプラグインの zip の場所 |
 | `KACT_WORKSPACE` | 作業フォルダー（省略時は起動したフォルダー） |
+| `KACT_KINTONE_CONFIG` | kintone の接続のファイル（kSQL の `ksql.config.json` と同じ形。**作業フォルダーの外**に置く。省略すると `kact_fields` / `kact_apps` は使えない） |
+
+### kintone の接続（`kact_fields` / `kact_apps` だけが使う）
+
+```jsonc
+{
+  "defaultProfile": "dev",
+  "profiles": {
+    "dev": {
+      "baseUrl": "https://example.cybozu.com",
+      "tokenMap": { "APP1001": "env:KACT_TOKEN_APP1001" }   // アプリごとの閲覧用 API トークン
+    }
+  }
+}
+```
+
+- 読むキーは `defaultProfile` と `profiles.<名前>` の `baseUrl` / `guestSpaceId` / `auth` / `username` / `password` / `passwordEnv` / `tokenMap` だけ（kSQL のほかのキーは読まずに通す）。
+- 読む環境変数は、**このファイルが名前を書いた `env:` と `passwordEnv` だけ**。
+- **GET だけ**（`app` / `apps` / `app/form/fields` / `preview/app/form/fields`）。レコードは読まない。
+- 接続のファイルの**場所も中身も秘密の値も返しません**（返すのはファイル名・profile 名・接続先のホストまで）。
 
 ## ライセンス
 
