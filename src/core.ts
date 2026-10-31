@@ -99,13 +99,24 @@ export async function statusOf(opt: LoadEngineOptions & { connection?: Connectio
   }
 }
 
-/** 封筒形式の設定ファイルを読む（`parseImport` は pluginID と形を確かめる） */
+/**
+ * 封筒形式の設定ファイルを読む（pluginID と形を確かめる）。
+ * **古い形は直してから検証する**（設定画面の取り込みと同じ順）。API の版 2 からは本体の `parseConfigFile` が
+ * その順でやってくれる。版 1 の zip では `parseImport`（検証が先）なので、後から足した項目を持たない
+ * 古いファイルは通らないことがある（その場合は新しい zip を使ってもらう）
+ */
 function parseConfigFile(engine: Engine, text: string): { config: Record<string, unknown>; envelope: Record<string, unknown> } {
+  const api = engine.api as typeof engine.api & {
+    parseConfigFile?: (text: string) => { data: Record<string, unknown>; envelope: Record<string, unknown> };
+  };
+  if (typeof api.parseConfigFile === "function") {
+    const r = api.parseConfigFile(text);
+    return { config: r.data, envelope: r.envelope };
+  }
   const parsed = engine.api.parseImport(text, String(engine.api.pluginIdName), engine.api.CONFIG_SCHEMA) as {
     data: Record<string, unknown>;
     envelope: Record<string, unknown>;
   };
-  // 保存済みの古い形を今の形に直してから検査する（設定画面の読み込みと同じ）
   const config = engine.api.migrateConfig(parsed.data) as Record<string, unknown>;
   return { config, envelope: parsed.envelope };
 }
@@ -339,9 +350,14 @@ export interface ActionSummary {
   code: string;
   name: string;
   enabled: boolean;
+  /** 種類（`record` / `app`。2026-10-31 に 3 つから 2 つになった） */
   type: string;
+  /** 一覧画面でも使う（種類 record だけ。選んだレコードに実行） */
+  onList: boolean;
   placements: string[];
-  /** 一覧の選択の渡し方（種類 list のときだけ意味がある） */
+  /** 一覧パネルの区分（空 = 区分なし） */
+  panelSection: string;
+  /** 一覧の選択の渡し方（「一覧でも使う」のときだけ意味がある） */
   selectionMode?: string;
   confirm: boolean;
   writeLimit: number;
@@ -376,8 +392,11 @@ export async function listActions(text: string, opt: LoadEngineOptions = {}): Pr
       name: String(a.name ?? ""),
       enabled: a.enabled !== false,
       type: String(a.type ?? ""),
+      onList: a.onList === true,
       placements: (Array.isArray(a.placements) ? a.placements : []).map(String),
-      ...(a.type === "list" ? { selectionMode: String(a.selectionMode ?? "loop") } : {}),
+      panelSection: String(a.panelSection ?? ""),
+      // 渡し方は「一覧でも使う」のときだけ効く（2026-10-31 に種類 list をやめた）
+      ...(a.onList === true ? { selectionMode: String(a.selectionMode ?? "loop") } : {}),
       confirm: !!a.confirm,
       writeLimit: Number(a.writeLimit ?? 0),
       sqlLines: String(a.sql ?? "").split("\n").length,

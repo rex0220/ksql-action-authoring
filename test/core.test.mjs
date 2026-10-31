@@ -26,7 +26,7 @@ const skip = !existsSync(ZIP);
 test("statusOf: zip から版と API の版を読む", { skip }, async () => {
   const r = await core.statusOf({ pluginZip: ZIP });
   assert.equal(r.status, "ok", JSON.stringify(r.findings));
-  assert.equal(r.plugin.apiVersion, 1);
+  assert.ok(r.tools.supportedApiVersions.includes(r.plugin.apiVersion), `API の版: ${r.plugin.apiVersion} / tools: ${r.tools.supportedApiVersions.join(",")}`);
   assert.equal(r.plugin.formulaEngine, true);
   assert.match(r.plugin.pluginId ?? "", /^[a-z]{32}$/);
   assert.ok(r.plugin.sha256.engine.length === 64);
@@ -61,6 +61,52 @@ test("checkConfig: 正しい設定は ok", { skip }, async () => {
   assert.equal(r.status, "ok", JSON.stringify(r.findings));
   assert.equal(r.summary.actions, 1);
   assert.deepEqual(r.summary.bindings, ["受注=4377", "取込=4379"]);
+});
+
+test("checkConfig: 今の形（種類 record ＋ 一覧でも使う ＋ 一覧パネル）も ok。古い形は migrate して通る", { skip }, async () => {
+  // 2026-10-31 の形: 種類は record / app の 2 つ、一覧画面は onList ＋ panel（区分と一覧の表）で決める
+  const now = {
+    configVersion: 1,
+    bindings: [{ name: "受注", appId: 4377 }],
+    limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+    timezone: "",
+    progressStyle: "dialog",
+    panel: {
+      title: "",
+      sections: [{ enabled: true, name: "受注", color: "blue", tone: "soft", collapsed: false }],
+      views: [{ viewId: "*", sections: ["受注"], menus: [], open: false }],
+    },
+    actions: [{
+      enabled: true, code: "close", name: "締める", description: "", type: "record", onList: true,
+      placements: ["detail_menu"], panelSection: "受注",
+      showCond: "", execCond: "", execNgMessage: "", params: [], inputs: [],
+      sql: "-- @ksql dialect: 1\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE $id = @_record;",
+      staticInsertRows: 0, confirm: true, writeLimit: 0, refreshPrompt: "auto",
+      allowed: [], allowAll: true, resultMessage: "",
+      listOnError: "continue", selectionMode: "loop", groupFormula: "", perRecordLock: false, prevRecord: false,
+    }],
+  };
+  const r = await core.checkConfig(envelope(now), { pluginZip: ZIP });
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  const listed = await core.listActions(envelope(now), { pluginZip: ZIP });
+  assert.equal(listed.actions[0].type, "record");
+  assert.equal(listed.actions[0].onList, true);
+  assert.equal(listed.actions[0].panelSection, "受注");
+  assert.equal(listed.actions[0].selectionMode, "loop");
+
+  // 古い形（種類 list・targetViews・index_panel・panel 無し）も、取り込みと同じ順で直してから検査するので通る
+  const old = JSON.parse(JSON.stringify(now));
+  delete old.panel;
+  delete old.progressStyle;
+  old.actions = [{ ...now.actions[0], type: "list", onList: undefined, placements: ["index_panel"], targetViews: [], panelSection: "受注" }];
+  delete old.actions[0].onList;
+  delete old.actions[0].refreshPrompt;
+  delete old.actions[0].allowAll;
+  const r2 = await core.checkConfig(envelope(old), { pluginZip: ZIP });
+  assert.equal(r2.status, "ok", JSON.stringify(r2.findings));
+  const listed2 = await core.listActions(envelope(old), { pluginZip: ZIP });
+  assert.equal(listed2.actions[0].type, "record", "種類 list は record ＋ 一覧でも使う に直る");
+  assert.equal(listed2.actions[0].onList, true);
 });
 
 test("checkConfig: 許されない SQL は invalid（プラグイン本体と同じ規則）", { skip }, async () => {

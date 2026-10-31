@@ -72,7 +72,7 @@ test("ツールが 13 本出る（読み取り専用の注釈つき）", { skip 
 test("kact_status: zip の版と API の版を返す", { skip }, async () => {
   const r = await call(client, "kact_status");
   assert.equal(r.status, "ok", JSON.stringify(r.findings));
-  assert.equal(r.plugin.apiVersion, 1);
+  assert.ok(r.tools.supportedApiVersions.includes(r.plugin.apiVersion), `API の版: ${r.plugin.apiVersion} / tools: ${r.tools.supportedApiVersions.join(",")}`);
   assert.equal(r.plugin.formulaEngine, true);
   assert.equal(r.surface, "claude-code");
 });
@@ -147,7 +147,7 @@ test("kact_docs: query で合う節だけを返す", { skip }, async () => {
 test("kact_status: tools の版と対応する API の版を返す", { skip }, async () => {
   const r = await call(client, "kact_status");
   assert.equal(r.tools.mode, "build");
-  assert.deepEqual(r.tools.supportedApiVersions, [1]);
+  assert.deepEqual(r.tools.supportedApiVersions, [1, 2], "埋め込んだ meta は src/meta.ts から読む（書き写しではない）");
   assert.equal(r.tools.pluginId, "afkekkiffjhdkcepekecalklafjhbcmf");
 });
 

@@ -17,7 +17,9 @@
 ## 版の対応
 
 - `src/meta.ts` の `SUPPORTED_API_VERSIONS` は、本体（`ksql-action/src/authoring/api.ts`）の `AUTHORING_API_VERSION` と対で保つ。
-  本体が API の名前や引数を変えて版を上げたら、ここに足して試験を流す。
+  本体が API の名前や引数を変えて版を上げたら、ここに足して試験を流す（今は **[1, 2]**。版 2 = 封筒を migrate してから検証する `parseConfigFile`）。
+  **埋め込む meta（`scripts/build.mjs` の `__KACT_TOOLS_META__`）は `src/meta.ts` から読む**。書き写すと食い違う
+  （2026-10-31 に `supportedApiVersions: [1]` が残っていて、版 2 の zip を MCP が拒んだ）。
 - `MIN_PLUGIN_VERSION` は、オーサリング API を同梱した最初のプラグインの版（Ver.1）。
 
 ## 保存の約束（段階 2）

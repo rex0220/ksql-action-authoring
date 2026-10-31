@@ -11,11 +11,12 @@ type Obj = Record<string, unknown>;
 
 const ENVELOPE_KEYS = ["appId", "appName", "PluginVersion"];
 /** アクションの、そのまま比べる値 */
-const ACTION_SCALARS = ["enabled", "name", "description", "type", "confirm", "writeLimit", "selectionMode", "listOnError", "perRecordLock", "prevRecord"];
+const ACTION_SCALARS = ["enabled", "name", "description", "type", "onList", "panelSection", "confirm", "writeLimit", "refreshPrompt", "selectionMode", "listOnError", "perRecordLock", "prevRecord", "allowAll"];
 /** アクションの、行の差分で見る文（SQL と計算式） */
 const ACTION_TEXTS = ["sql", "showCond", "execCond", "execNgMessage", "resultMessage", "groupFormula"];
 /** アクションの、まとめて比べる配列 */
-const ACTION_LISTS = ["placements", "targetViews", "params", "inputs", "allowed"];
+// targetViews は 2026-10-31 に廃止（一覧ごとの出す区分 = 共通設定の panel.views）
+const ACTION_LISTS = ["placements", "params", "inputs", "allowed"];
 
 const show = (v: unknown): string => (v === undefined ? "（無し）" : typeof v === "string" ? (v === "" ? "（空）" : v) : JSON.stringify(v));
 

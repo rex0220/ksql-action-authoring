@@ -27,6 +27,26 @@ const docs = {
 };
 console.log(`docs: ${docs.sections.length} 章 ${docs.sections.reduce((n, s) => n + s.text.length, 0).toLocaleString()} 文字`);
 
+/**
+ * 埋め込む meta は **src/meta.ts から読む**（書き写すと食い違う。2026-10-31 に
+ * `supportedApiVersions` が [1] のまま残って、API の版 2 の zip を MCP が拒んだ）
+ */
+function metaFromSource() {
+  const text = readFileSync(path.join(root, "src/meta.ts"), "utf8");
+  const pick = (name) => {
+    const m = text.match(new RegExp(`export const ${name}[^=]*=\\s*([^;]+);`));
+    if (!m) throw new Error(`src/meta.ts から ${name} を読めない`);
+    return m[1].trim();
+  };
+  const pluginId = pick("KSQL_ACTION_PLUGIN_ID").replace(/^"|"$/g, "");
+  const minPluginVersion = Number(pick("MIN_PLUGIN_VERSION"));
+  const supportedApiVersions = JSON.parse(pick("SUPPORTED_API_VERSIONS"));
+  if (!/^[a-z]{32}$/.test(pluginId) || !Number.isInteger(minPluginVersion) || !Array.isArray(supportedApiVersions)) {
+    throw new Error("src/meta.ts の値の形が変わっている（build.mjs の metaFromSource を直す）");
+  }
+  return { pluginId, minPluginVersion, supportedApiVersions };
+}
+
 await build({
   entryPoints: ["src/mcp.ts"],
   bundle: true,
@@ -36,7 +56,7 @@ await build({
   outfile: "dist/mcp.mjs",
   external: ["happy-dom"],
   define: {
-    __KACT_TOOLS_META__: JSON.stringify(JSON.stringify({ toolsVersion: pkg.version, pluginId: "afkekkiffjhdkcepekecalklafjhbcmf", minPluginVersion: 1, supportedApiVersions: [1], commit: gitCommit(root), mode: "build", builtAt: new Date().toISOString() })),
+    __KACT_TOOLS_META__: JSON.stringify(JSON.stringify({ toolsVersion: pkg.version, ...metaFromSource(), commit: gitCommit(root), mode: "build", builtAt: new Date().toISOString() })),
     __KACT_DOCS__: JSON.stringify(JSON.stringify(docs)),
   },
   logLevel: "info",
