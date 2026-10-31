@@ -54,13 +54,13 @@ after(async () => {
 });
 const call = async (client, name, args = {}) => JSON.parse((await client.callTool({ name, arguments: args })).content[0].text);
 
-test("ツールが 13 本出る（読み取り専用の注釈つき）", { skip }, async () => {
+test("ツールが 14 本出る（読み取り専用の注釈つき）", { skip }, async () => {
   const { tools } = await client.listTools();
   assert.deepEqual(tools.map((t) => t.name).sort(), [
-    "kact_actions", "kact_apps", "kact_check", "kact_delete_action", "kact_diff", "kact_docs", "kact_fields", "kact_files",
-    "kact_pull", "kact_save_config", "kact_status", "kact_update_action", "kact_workspace_status",
+    "kact_actions", "kact_apps", "kact_check", "kact_delete_action", "kact_diff", "kact_docs", "kact_explain", "kact_fields",
+    "kact_files", "kact_pull", "kact_save_config", "kact_status", "kact_update_action", "kact_workspace_status",
   ]);
-  const readOnly = new Set(["kact_docs", "kact_status", "kact_workspace_status", "kact_check", "kact_actions", "kact_files", "kact_diff", "kact_apps"]);
+  const readOnly = new Set(["kact_docs", "kact_status", "kact_workspace_status", "kact_check", "kact_actions", "kact_files", "kact_diff", "kact_apps", "kact_explain"]);
   // kintone に通信するのは段階 3 の 2 本だけ（ほかは zip と作業フォルダーだけ）
   const openWorld = new Set(["kact_fields", "kact_apps"]);
   for (const t of tools) {
@@ -147,7 +147,7 @@ test("kact_docs: query で合う節だけを返す", { skip }, async () => {
 test("kact_status: tools の版と対応する API の版を返す", { skip }, async () => {
   const r = await call(client, "kact_status");
   assert.equal(r.tools.mode, "build");
-  assert.deepEqual(r.tools.supportedApiVersions, [1, 2], "埋め込んだ meta は src/meta.ts から読む（書き写しではない）");
+  assert.deepEqual(r.tools.supportedApiVersions, [1, 2, 3], "埋め込んだ meta は src/meta.ts から読む（書き写しではない）");
   assert.equal(r.tools.pluginId, "afkekkiffjhdkcepekecalklafjhbcmf");
 });
 

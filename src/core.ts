@@ -369,6 +369,99 @@ export interface ActionSummary {
   inputs: string[];
 }
 
+export interface ExplainOptions extends LoadEngineOptions {
+  /** 控えの項目定義（アプリ番号 → `kact_fields` が置いた `properties`）。mcp 側が集めて渡す */
+  fields?: Record<string, Record<string, unknown>>;
+}
+
+export interface ExplainResult {
+  status: ToolStatus;
+  action?: { index: number; code: string; name: string };
+  /** 文ごとの種類と計画（エンジンの EXPLAIN） */
+  statements?: Array<{ index: number; type: string; plan: string[] }>;
+  /** 控えを使ったアプリの番号（通信はしていない） */
+  usedApps?: number[];
+  findings: Finding[];
+}
+
+/**
+ * 実行計画（kact_explain）。エンジンの EXPLAIN を**控えの項目定義だけ**で回す。
+ * **kintone には行かない**（`explainScript` が client に聞くのは `getFields(アプリ番号)` だけで、レコードは読まない）。
+ * 控えの無いアプリがあれば、その番号を findings で知らせる（`kact_fields` で取ってから、と言う）
+ */
+export async function explainAction(text: string, input: { action: string | number }, opt: ExplainOptions = {}): Promise<ExplainResult> {
+  let engine: Engine;
+  try {
+    engine = await loadEngine(opt);
+  } catch (e) {
+    const info = e instanceof PluginZipError ? e : undefined;
+    return { status: "failed", findings: [{ level: "error", code: info?.code ?? "engine-load-failed", message: e instanceof Error ? e.message : String(e) }] };
+  }
+  const api = engine.api as typeof engine.api & {
+    explainActionSql?: (action: unknown, bindings: unknown, client: unknown) => Promise<{ statements: Array<{ index: number; type: string; plan: string[] }> }>;
+    createFieldsClient?: (fields: Record<string, Record<string, unknown>>) => unknown;
+  };
+  if (typeof api.explainActionSql !== "function" || typeof api.createFieldsClient !== "function") {
+    return {
+      status: "incompatible",
+      findings: [{ level: "error", code: "api-too-old", message: "この zip のオーサリング API には実行計画が無い（Ver. を上げたプラグインの zip が要る）" }],
+    };
+  }
+  let config: Record<string, unknown>;
+  try {
+    ({ config } = parseConfigFile(engine, text));
+  } catch (e) {
+    return { status: "invalid", findings: [{ level: "error", code: "parse-failed", message: e instanceof Error ? e.message : String(e) }] };
+  }
+  const actions = (Array.isArray(config.actions) ? config.actions : []) as Array<Record<string, unknown>>;
+  const at =
+    typeof input.action === "number"
+      ? actions.findIndex((_a, i) => i + 1 === input.action)
+      : actions.findIndex((a) => String(a.code ?? "") === String(input.action));
+  const action = at >= 0 ? actions[at] : undefined;
+  if (!action) {
+    return {
+      status: "invalid",
+      findings: [{ level: "error", code: "action-not-found", message: `アクションが見つからない: ${String(input.action)}（コードか 1 からの番号で渡す。一覧は kact_actions）` }],
+    };
+  }
+  const bindings = (Array.isArray(config.bindings) ? config.bindings : []) as Array<{ name: string; appId: number }>;
+  const cache = opt.fields ?? {};
+  const usedApps: number[] = [];
+  const missing: number[] = [];
+  /**
+   * エンジンの client は**本体に作らせる**（`createFieldsClient`）。手元の fetch で項目定義だけを返すので、
+   * 通信しない・レコードは読まない。控えの無いアプリはエラーになるので、番号を控えて findings にする
+   */
+  const served: Record<string, Record<string, unknown>> = {};
+  for (const [id, properties] of Object.entries(cache)) {
+    served[id] = properties;
+    usedApps.push(Number(id));
+  }
+  for (const b of (Array.isArray(config.bindings) ? config.bindings : []) as Array<{ appId?: unknown }>) {
+    const id = Number(b?.appId ?? 0);
+    if (Number.isSafeInteger(id) && id > 0 && !served[String(id)] && !missing.includes(id)) missing.push(id);
+  }
+  const client = api.createFieldsClient(served);
+  const findings: Finding[] = [];
+  let statements: Array<{ index: number; type: string; plan: string[] }>;
+  try {
+    const r = await api.explainActionSql(action, bindings, client);
+    statements = r.statements;
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    for (const id of missing) {
+      findings.push({ level: "error", code: "fields-missing", message: `アプリ ${id} の項目定義の控えが無い（kact_fields で取る）` });
+    }
+    findings.push({ level: "error", code: "explain-failed", message });
+    return { status: "invalid", action: { index: at + 1, code: String(action.code ?? ""), name: String(action.name ?? "") }, findings };
+  }
+  for (const id of missing) {
+    findings.push({ level: "warning", code: "fields-missing", message: `アプリ ${id} の項目定義の控えが無いまま計画を出した（kact_fields で取ると正しくなる）` });
+  }
+  return { status: "ok", action: { index: at + 1, code: String(action.code ?? ""), name: String(action.name ?? "") }, statements, usedApps, findings };
+}
+
 /** 設定の中身を一覧（kact_actions）。**SQL 本文と値は返さない** */
 export async function listActions(text: string, opt: LoadEngineOptions = {}): Promise<{ status: ToolStatus; actions?: ActionSummary[]; findings: Finding[] }> {
   let engine: Engine;

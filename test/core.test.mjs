@@ -109,6 +109,43 @@ test("checkConfig: 今の形（種類 record ＋ 一覧でも使う ＋ 一覧�
   assert.equal(listed2.actions[0].onList, true);
 });
 
+test("explainAction: 控えの項目定義だけで実行計画を出す（kintone には行かない）", { skip }, async () => {
+  const props = (names) =>
+    Object.fromEntries(names.map((n) => [n, { type: n === "金額" || n === "件数" ? "NUMBER" : "SINGLE_LINE_TEXT", code: n, label: n }]));
+  const config = {
+    configVersion: 1,
+    bindings: [{ name: "受注", appId: 4377 }, { name: "集計", appId: 4378 }],
+    limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+    timezone: "",
+    actions: [{
+      enabled: true, code: "agg", name: "集計", description: "", type: "app", onList: false,
+      placements: [], panelSection: "", showCond: "", execCond: "", execNgMessage: "", params: [], inputs: [],
+      sql: "-- @ksql dialect: 1\nINSERT INTO LAPP_集計 (顧客コード, 件数) SELECT 顧客コード, COUNT(*) FROM LAPP_受注 GROUP BY 顧客コード;",
+      staticInsertRows: 0, confirm: true, writeLimit: 0, refreshPrompt: "auto", allowed: [], allowAll: true,
+      resultMessage: "", listOnError: "continue", selectionMode: "loop", groupFormula: "", perRecordLock: false, prevRecord: false,
+    }],
+  };
+  const fields = { "4377": props(["顧客コード", "金額"]), "4378": props(["顧客コード", "件数"]) };
+  const r = await core.explainAction(envelope(config), { action: "agg" }, { pluginZip: ZIP, fields });
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  assert.equal(r.action.code, "agg");
+  assert.equal(r.statements.length, 1);
+  assert.match(r.statements[0].type, /INSERT/i);
+  assert.ok(r.statements[0].plan.join("\n").length > 0, "計画の行がある");
+  assert.deepEqual(r.findings, [], "控えがそろっていれば注意は出ない");
+
+  // 番号でも引ける。知らないコードは invalid
+  const byIndex = await core.explainAction(envelope(config), { action: 1 }, { pluginZip: ZIP, fields });
+  assert.equal(byIndex.status, "ok");
+  const missing = await core.explainAction(envelope(config), { action: "no-such" }, { pluginZip: ZIP, fields });
+  assert.equal(missing.status, "invalid");
+  assert.equal(missing.findings[0].code, "action-not-found");
+
+  // 控えが無ければ、その番号を知らせる（通信はしない）
+  const noFields = await core.explainAction(envelope(config), { action: "agg" }, { pluginZip: ZIP });
+  assert.ok(noFields.findings.some((f) => f.code === "fields-missing"), JSON.stringify(noFields.findings));
+});
+
 test("checkConfig: 許されない SQL は invalid（プラグイン本体と同じ規則）", { skip }, async () => {
   const config = {
     configVersion: 1, bindings: [{ name: "受注", appId: 4377 }],

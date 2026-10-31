@@ -44,6 +44,7 @@ kintone プラグイン **「kSQL アクション」（rex0220 kSQL Action）** 
 | `kact_check` | 設定ファイルを**プラグイン本体と同じ規則**で検査（エラーと注意） | なし |
 | `kact_actions` | 設定ファイルの中身を 1 アクション 1 行で（SQL 本文は返さない。`digest` 付き） | なし |
 | `kact_diff` | 2 つの設定の差（アクション単位。SQL と計算式は変わった行だけ） | なし |
+| `kact_explain` | アクションの SQL の**実行計画**（文ごとの種類・読むアプリ・kintone に投げる条件・API の見積もり）。**控えの項目定義だけを使い、kintone には行かない** | なし |
 | `kact_save_config` | 新しい設定ファイルを**検査してから**保存（**上書きしない**） | 作業フォルダー |
 | `kact_update_action` | アクションを 1 つ差し替える・足す（`expectedDigest` で照合。直した差を `changes` で返す） | 作業フォルダー |
 | `kact_delete_action` | アクションを 1 つ消す（`expectedDigest` で照合。最後の 1 件は消せない） | 作業フォルダー |

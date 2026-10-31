@@ -17,7 +17,7 @@
 ## 版の対応
 
 - `src/meta.ts` の `SUPPORTED_API_VERSIONS` は、本体（`ksql-action/src/authoring/api.ts`）の `AUTHORING_API_VERSION` と対で保つ。
-  本体が API の名前や引数を変えて版を上げたら、ここに足して試験を流す（今は **[1, 2]**。版 2 = 封筒を migrate してから検証する `parseConfigFile`）。
+  本体が API の名前や引数を変えて版を上げたら、ここに足して試験を流す（今は **[1, 2, 3]**。版 2 = 封筒を migrate してから検証する `parseConfigFile`、版 3 = 実行計画の `explainActionSql` と、控えだけで動く `createFieldsClient`）。
   **埋め込む meta（`scripts/build.mjs` の `__KACT_TOOLS_META__`）は `src/meta.ts` から読む**。書き写すと食い違う
   （2026-10-31 に `supportedApiVersions: [1]` が残っていて、版 2 の zip を MCP が拒んだ）。
 - `MIN_PLUGIN_VERSION` は、オーサリング API を同梱した最初のプラグインの版（Ver.1）。
@@ -43,6 +43,13 @@
 `src/plugin-zip.ts` / `src/engine.ts` / `src/meta.ts` / `src/paths.ts` / `src/commit-file.ts` / `src/line-diff.ts` / `src/connections.ts` / `src/kintone-rest.ts` / `src/kintone-url.ts` は、**印刷屋のオーサリング tools（`print-craft-authoring/tools`。MIT・同じ作者）から写して直したもの**です（`commit-file.ts` はロックの名前だけ、`line-diff.ts` と `kintone-url.ts` はそのまま）。
 zip の読み取り（2 層・zip bomb・CRC の確認）、エンジンの読み込み（happy-dom、`moment` → `moment-timezone` → `bignumber` → `decimal` → 計算式エンジン → オーサリング API の順、`kintone` と `cybozu` のスタブ）、**ファイルの確定とロック**、**接続のファイルの読み取りと GET だけの REST** の作りは向こうが正本です（Codex のレビューを何度も通している）。
 直すときは向こうの変更も見る。
+
+## 実行計画（段階 4）
+
+- `kact_explain` は **kintone に行かない**。本体の `createFieldsClient`（版 3）に控えの `properties` を渡し、
+  その client を `explainActionSql` に渡す。client の fetch は手元にあり、`app/form/fields.json` 以外は投げない（レコードは読まない）。
+- 控え（`kact_fields`）が無いアプリがあるとエンジンが止まるので、その番号を findings で知らせる。
+- 計画の文字に出る `APP9000000xx` はエンジンが付ける内部の名前（実アプリ番号ではない）。
 
 ## kintone への通信（段階 3）
 

@@ -16,7 +16,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { readFileSync } from "node:fs";
-import { checkConfig, listActions, statusOf } from "./core.ts";
+import { checkConfig,
+  explainAction, listActions, statusOf } from "./core.ts";
 import { resolveInWorkspace, workspaceStatus, WorkspaceError } from "./workspace.ts";
 import { deleteAction, digestOf, filesOf, pullConfig, saveConfig, updateAction } from "./save.ts";
 import { connectionReport, fetchFields, findFieldsFile, listApps, type KintoneOptions } from "./fields.ts";
@@ -68,6 +69,29 @@ function checkOptions(text: string): { pluginZip?: string; fields?: Record<strin
   if (!Number.isSafeInteger(appId) || appId <= 0) return base;
   const found = findFieldsFile(appId);
   return found ? { ...base, fields: found.file.properties, appId, fieldsPath: found.path } : base;
+}
+
+/**
+ * 実行計画に渡す控え（アプリ番号 → properties）。設定の論理アプリ（bindings）の分を作業フォルダーから集める。
+ * **通信はしない**（控えが無いアプリは core が findings で知らせる）
+ */
+function explainOptions(text: string): { pluginZip?: string; fields?: Record<string, Record<string, unknown>> } {
+  const base = zipOptions();
+  const fields: Record<string, Record<string, unknown>> = {};
+  try {
+    const parsed: unknown = JSON.parse(text);
+    const bindings = parsed && typeof parsed === "object" ? (parsed as { bindings?: unknown }).bindings : undefined;
+    if (!Array.isArray(bindings)) return base;
+    for (const b of bindings) {
+      const appId = Number((b as { appId?: unknown })?.appId ?? 0);
+      if (!Number.isSafeInteger(appId) || appId <= 0) continue;
+      const found = findFieldsFile(appId);
+      if (found) fields[String(appId)] = found.file.properties as unknown as Record<string, unknown>;
+    }
+  } catch {
+    return base;
+  }
+  return Object.keys(fields).length > 0 ? { ...base, fields } : base;
 }
 
 /** 作業フォルダーのファイルを読む（パスの検査つき）。失敗は findings の形で返す */
@@ -175,6 +199,27 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
       if (!r.ok) return r.result;
       const opt = checkOptions(r.text);
       return json({ ...(await checkConfig(r.text, opt)), ...(opt.fieldsPath ? { fieldsFrom: opt.fieldsPath } : {}) });
+    },
+  );
+
+  server.registerTool(
+    "kact_explain",
+    {
+      title: "kact: 実行計画",
+      description:
+        "アクションの SQL の**実行計画**（EXPLAIN）を出す。文ごとに種類と、読むアプリ・kintone に投げる条件・使う項目・API の見積もりが分かるので、" +
+        "「条件が効かず全件に当たる」「読む順が思っていたのと違う」を取り込む前に見つけられる。" +
+        "**kintone には行かない**（kact_fields が置いた項目定義の控えだけを使い、レコードは読まない）。控えが無いアプリがあれば findings で知らせる。",
+      inputSchema: {
+        file: z.string().min(1).max(200).describe("作業フォルダーからの相対パス（例: settings/kact-4377.json）"),
+        action: z.union([z.string().min(1).max(64), z.number().int().positive()]).describe("アクションのコード、または kact_actions の index（1 から）"),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ file, action }) => {
+      const r = readWorkspaceFile(file);
+      if (!r.ok) return r.result;
+      return json(await explainAction(r.text, { action }, explainOptions(r.text)));
     },
   );
 
