@@ -107,7 +107,6 @@
 | 値 | 場所 | 使える種類 |
 |---|---|---|
 | `detail_menu` | 詳細画面のヘッダー | record |
-| `detail_space` | 詳細画面のスペース項目 | record |
 | `event_create` | 保存後（追加） | record のみ |
 | `event_edit` | 保存後（編集。一覧のインライン編集を含む） | record のみ |
 | `event_status` | ステータス変更（遷移が確定した後の詳細画面で実行） | record のみ |
