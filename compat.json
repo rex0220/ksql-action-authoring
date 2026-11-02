@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "runtimeChecks": {
+    "mcpVersion": "0.1.0",
+    "authoringApiVersions": [
+      1,
+      2,
+      3
+    ],
+    "pluginVersion": {
+      "min": 1
+    }
+  },
+  "informational": {
+    "note": "authoringApiVersions と pluginVersion.min の正本は src/meta.ts（SUPPORTED_API_VERSIONS / MIN_PLUGIN_VERSION）。scripts/build.mjs が食い違いで止める。kSQL アクションプラグインの版の上限は書かない（版を上げただけのプラグインで kact の公開を要しないように。formula MCP・print-craft MCP と同じ考え）"
+  }
+}

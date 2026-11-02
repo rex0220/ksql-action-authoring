@@ -9,6 +9,17 @@ kintone プラグイン **「kSQL アクション」（rex0220 kSQL Action）** 
   このリポジトリに有償プラグインのコードは入っていません。
 - 配り方は 2 つ: **Claude Code のプラグイン**（ツール名の接頭辞は `kact_`）と、**Claude Desktop の `.mcpb`**。
 
+## 入れ方
+
+> **まだ公開していません**（kSQL アクションプラグイン Ver.1 のリリースの後に出します）。下はその形です。
+
+- **Claude Desktop**: リリースから `ksql-action-authoring-<版>.mcpb` をダウンロードしてダブルクリック。設定で、作業フォルダー、kSQL アクションプラグインの zip、kintone の接続のファイルを選ぶ（下の「起動の設定」と「kintone の接続」）
+- **Claude Code**（ターミナルの `claude`。Node.js はサポートが続いている系列（22 以降）の最新の修正版を勧める。[SECURITY.md](SECURITY.md)）: `/plugin install ksql-action --marketplace rex0220/ksql-action-authoring`（Claude Code 2.1.275 以降。それより前は `/plugin marketplace add rex0220/ksql-action-authoring` → `/plugin install ksql-action@rex0220-ksql-action`）。そのあと `/config` で、プラグインの zip と kintone の接続のファイル。作業フォルダーは Claude Code を起動したフォルダーです
+- zip は、アプリに入れたものと同じ版（Ver.1 以降）の、配布元から入手したものを使う。kintone の API トークンは、アプリごとの閲覧だけのものを使う
+- 使い方: チャットで「kSQL アクションで、受注を顧客ごとに集計するボタンを作りたい」のように頼む。AI は最初に `kact_docs` で手順を読み、項目定義（`kact_fields`）→ 仕様の確認 → 設定の保存（`kact_save_config`）→ 実行計画（`kact_explain`）→ 反映方法（設定画面でアップロード）の順に進める。kintone には読み取り（GET）だけで、**取り込みとアクションの実行は利用者が画面で行う**
+
+利用者向け: [PRIVACY.md](PRIVACY.md)（プライバシーポリシー）、[SECURITY.md](SECURITY.md)（脆弱性の報告と、受け入れた危険）、[CHANGELOG.md](CHANGELOG.md)、[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)（同梱の依存のライセンス）。
+
 ## 要るもの
 
 | もの | 置き場所 | 備考 |
@@ -30,10 +41,41 @@ kintone プラグイン **「kSQL アクション」（rex0220 kSQL Action）** 
 |---|---|
 | `src/` | tools の中核（zip の読み取り、エンジンとオーサリング API の読み込み、検査の呼び出し）と MCP サーバー |
 | `vendor/` | zip に入っていない moment（プラグインは CDN から読むため、tools は自前で持つ） |
-| `docs/` | 手順と資料（`kact_docs` が返すもの。`manifest.json` が章の一覧） |
-| `dist/` | `npm run build` が作る MCP サーバー 1 ファイル（`dist/mcp.mjs`） |
+| `docs/` | 手順と資料（`kact_docs` が返すもの。`manifest.json` が章の一覧）と [リリース手順](docs/リリース手順.md) |
+| `dist/` | `npm run build` が作る MCP サーバー 1 ファイル（`dist/mcp.mjs`。happy-dom も束ねてある） |
+| `hooks/` | Claude Code のフック（AI が設定ファイル・控え・ダウンロードを直接 Write / Edit するのを止める） |
+| `.claude-plugin/`、`.mcp.json` | Claude Code のプラグインの形（`plugin.json`、公開のときに `marketplace.json`） |
+| `compat.json` | 版の対応（MCP の版、対応する authoring API の版、プラグインの版の下限。正本は `src/meta.ts`） |
+| `scripts/`、`build-mcpb.mjs` | ビルドと、配布物（`.mcpb` / プラグインの zip）を作る・検査するもの |
 
-## ツール（段階 2 まで）
+## 作り方と試験
+
+リリース（`.mcpb`、Claude Code のプラグイン）の手順は [docs/リリース手順.md](docs/リリース手順.md)。
+
+隣に `ksql-action`（プラグインの zip `dist/ksql-action-plugin1.zip`。試験だけ。`KACT_TEST_PLUGIN_ZIP` で別の場所を指せる）があること。
+
+```sh
+npm ci
+npm run check            # tsc
+npm run build            # dist/mcp.mjs（版・互換表・著作権表示の食い違いで止まる）
+npm test                 # 試験（先に build）
+npm run verify:mcpb      # ビルド → .mcpb → 検査
+npm run verify:plugin    # ビルド → プラグインの zip → 検査（claude があれば plugin validate も）
+npm run notices          # 依存を変えたとき: THIRD_PARTY_NOTICES.md を作り直す（差分を見てコミット）
+node scripts/forbidden-files.mjs [--history]   # 入れてはいけないもの（--history は履歴のすべてのコミット）
+claude plugin validate . && claude plugin test .   # プラグインの形と、フックの試験（hooks/register.test.ts）
+```
+
+フックの型を見るには `.claude-plugin/types/`（`claude-code` の型。git に入れない）が要ります。
+あれば `npx tsc --noEmit -p hooks/tsconfig.json` で確かめられます。
+
+配布物は**同じコミットから作れば同じバイト列**になります（埋め込む日時はコミットの日時）。marketplace はリリースの zip を sha256 で固定して指します。
+
+## 手で確かめること
+
+リリースの候補で、Claude Code（`claude --plugin-dir dist-plugin/<zip>` か marketplace）と Desktop（`.mcpb`）の両方で: `kact_status` が ok、試験用アプリの `kact_fields` → `kact_save_config` → `kact_check` → `kact_explain` の流れ、既存の設定の `kact_pull` → `kact_actions` → `kact_update_action` → `kact_diff`、保存した設定が設定画面で取り込めること、ボタンを押して動くこと、ログ（Desktop の `main.log`、Claude Code の標準エラー）に秘密の値・SQL 本文・レコードの値が無いこと。
+
+## ツール（14 本）
 
 | ツール | すること | 書き込み |
 |---|---|---|

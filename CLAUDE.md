@@ -39,6 +39,18 @@
   バンドルしないで動かすときは `docs/` から読むので、`npm test` は `npm run build` の後に流す。
 - 開発環境のホスト名・実アプリ ID・業務データの値を資料に書かない（例は架空の名前で書く）。
 
+## 配布（段階 5）
+
+- 配るのは **Claude Desktop の `.mcpb`** と **Claude Code のプラグイン**（marketplace `rex0220-ksql-action`）の 2 つ。**npm には公開しない**（本体を束ねてあるので中核のパッケージが要らない）。手順は `docs/リリース手順.md`。
+- 配布のしくみは **formula MCP（`formula-authoring-mcp`）からの写し**で、**あちらが正本**（`scripts/zip.mjs`・`forbidden-files.mjs`・`third-party-notices.mjs`・`mcpb-verify.mjs`・`plugin-zip-verify.mjs`・`write-marketplace.mjs`・`build-mcpb.mjs`・`hooks/`）。直すときは向こうの変更も見る。
+- 版は **`package.json`・`.claude-plugin/plugin.json`・`compat.json` の 3 か所を同じに**する（`scripts/build.mjs` と `test/release.test.mjs` が食い違いで止める）。`compat.json` の `authoringApiVersions` と `pluginVersion.min` の正本は `src/meta.ts`。
+- **配布物は同じコミットから作れば同じバイト列**（埋め込む日時は**コミットの日時**。`builtAt` にビルドの時刻を入れない。marketplace が sha256 で固定するため）。
+- `THIRD_PARTY_NOTICES.md` はビルドが作る。手で直さない（依存を変えたら `npm run notices` → 差分を見てコミット）。
+- 作業の成果物（`dist/`・`dist-mcpb/`・`dist-plugin/`・`.tmp/`）と、`fields/`・`inbox/`・`settings/` はコミットしない（`.gitignore`。`test/release.test.mjs` がリポジトリを検査する）。
+- `hooks/` のフックは**直接の書き込みを止めるだけ**（`settings/**/*.json`・`fields/**`・`inbox/**`）。formula のような作業フォルダーの登録（`workspaceId` の書き換え）は入れていない（kact のツールは作業フォルダーを引数で受けないため）。
+  フックは **fail-closed**（セッションのフォルダーが解決できなければ書き込みを断る）なので、直したら `claude plugin test .`（`hooks/register.test.ts`。6 件）を流す。
+- `.claude-plugin/types/` は `claude-code` の型（git に入れない。formula MCP の同じフォルダーから写せる）。`hooks/tsconfig.json` がそれを見る。
+
 ## 写し元
 
 `src/plugin-zip.ts` / `src/engine.ts` / `src/meta.ts` / `src/paths.ts` / `src/commit-file.ts` / `src/line-diff.ts` / `src/connections.ts` / `src/kintone-rest.ts` / `src/kintone-url.ts` は、**印刷屋のオーサリング tools（`print-craft-authoring/tools`。MIT・同じ作者）から写して直したもの**です（`commit-file.ts` はロックの名前だけ、`line-diff.ts` と `kintone-url.ts` はそのまま）。

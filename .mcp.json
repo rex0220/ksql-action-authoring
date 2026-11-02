@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "ksql-action": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/dist/mcp.mjs",
+        "--surface",
+        "claude-code"
+      ],
+      "env": {
+        "KACT_PLUGIN_ZIP": "${user_config.pluginZip}",
+        "KACT_KINTONE_CONFIG": "${user_config.kintoneConfig}",
+        "KACT_WORKSPACE": "${user_config.workspace}"
+      }
+    }
+  }
+}

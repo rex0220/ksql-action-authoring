@@ -9,7 +9,12 @@
     "build": "node scripts/build.mjs",
     "check": "tsc --noEmit -p tsconfig.json",
     "test": "node --test test/*.test.mjs",
-    "vendor": "node scripts/vendor.mjs"
+    "vendor": "node scripts/vendor.mjs",
+    "notices": "node scripts/build.mjs --write-notices",
+    "build:mcpb": "node scripts/build.mjs && node build-mcpb.mjs",
+    "verify:mcpb": "node scripts/build.mjs && node build-mcpb.mjs && node scripts/mcpb-verify.mjs",
+    "build:plugin": "node scripts/build.mjs && node scripts/build-plugin-zip.mjs",
+    "verify:plugin": "node scripts/build.mjs && node scripts/build-plugin-zip.mjs && node scripts/plugin-zip-verify.mjs"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

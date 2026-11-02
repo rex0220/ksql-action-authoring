@@ -7,3 +7,8 @@ kintone/
 out/
 records/
 .env
+fields/
+inbox/
+*.mcpb
+.claude-plugin/types/
+.tmp/

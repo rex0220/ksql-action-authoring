@@ -1,0 +1,39 @@
+{
+  "name": "ksql-action",
+  "version": "0.1.0",
+  "description": "kintone の kSQL アクションプラグイン（rex0220 kSQL Action）の設定 JSON を、検査と実行計画を通して作業フォルダーに保存・確認する（kact MCP と、設定ファイルへの直接の書き込みを止めるフック）",
+  "author": {
+    "name": "rex0220"
+  },
+  "homepage": "https://github.com/rex0220/ksql-action-authoring",
+  "repository": "https://github.com/rex0220/ksql-action-authoring",
+  "license": "MIT",
+  "keywords": [
+    "kintone",
+    "ksql",
+    "kSQLアクション",
+    "mcp"
+  ],
+  "privacyPolicyUrl": "https://github.com/rex0220/ksql-action-authoring/blob/main/PRIVACY.md",
+  "supportUrl": "https://github.com/rex0220/ksql-action-authoring/issues",
+  "userConfig": {
+    "pluginZip": {
+      "type": "string",
+      "title": "kSQL アクションプラグインの zip",
+      "description": "アプリに入れた kSQL アクションプラグイン（Ver.1 以降。試用版でよい）の zip の絶対パス。検査と計算式エンジンはこの zip から読む",
+      "required": false
+    },
+    "kintoneConfig": {
+      "type": "string",
+      "title": "kintone の接続のファイル",
+      "description": "kSQL の ksql.config.json と同じ形のファイルの絶対パス（作業フォルダーの外に置く。kSQL と同じファイルでもよい）。空なら kintone を使うツール（kact_fields / kact_apps）は使えない",
+      "required": false
+    },
+    "workspace": {
+      "type": "string",
+      "title": "作業フォルダー（省略可）",
+      "description": "設定ファイルを置くフォルダーの絶対パス。空なら Claude Code を起動したフォルダー（ふつうは空のままでよい）",
+      "required": false
+    }
+  }
+}

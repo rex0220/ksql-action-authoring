@@ -1,0 +1,17 @@
+{
+  "configVersion": 1,
+  "bindings": [{ "name": "受注", "appId": 1001 }],
+  "timezone": "",
+  "actions": [
+    {
+      "enabled": true,
+      "code": "mark",
+      "name": "印を付ける",
+      "type": "record",
+      "placements": ["detail_menu"],
+      "params": [{ "name": "cust", "source": "formula", "formula": "顧客コード" }],
+      "sql": "-- @ksql dialect: 1\nDECLARE @cust = '';\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 顧客コード = @cust;",
+      "confirm": true
+    }
+  ]
+}

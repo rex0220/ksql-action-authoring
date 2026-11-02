@@ -16,6 +16,9 @@
 
 表に無い種類は**保存時に拒否**します（fail-closed）。`SELECT` は、許す文の中（`INSERT … SELECT`、`SET @x = (SELECT …)`、CTE、サブクエリ、一時テーブル）でだけ使えます。
 
+**`DELETE` には `WHERE` が必須**です（全件削除を防ぐため）。`DELETE FROM LAPP_集計;` は「DELETE 文には WHERE 句が必須です」で**保存できません**。
+集計アプリを作り直す形では `DELETE FROM LAPP_集計 WHERE $id > 0;` のように、全件に当たる条件を書きます。
+
 ## パラメーター（`DECLARE` の外部注入）
 
 ```sql
