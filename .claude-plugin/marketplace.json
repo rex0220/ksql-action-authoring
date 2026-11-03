@@ -1,0 +1,31 @@
+{
+  "name": "rex0220-ksql-action",
+  "description": "kintone の kSQL アクションプラグイン（rex0220 kSQL Action）の設定を、Claude Code で作る・直す（ksql-action）",
+  "owner": {
+    "name": "rex0220",
+    "url": "https://github.com/rex0220"
+  },
+  "plugins": [
+    {
+      "name": "ksql-action",
+      "description": "kintone の kSQL アクションプラグイン（rex0220 kSQL Action）の設定 JSON を、検査と実行計画を通して作業フォルダーに保存・確認する（kact MCP と、設定ファイルへの直接の書き込みを止めるフック）",
+      "author": {
+        "name": "rex0220"
+      },
+      "homepage": "https://github.com/rex0220/ksql-action-authoring",
+      "repository": "https://github.com/rex0220/ksql-action-authoring",
+      "license": "MIT",
+      "keywords": [
+        "kintone",
+        "ksql",
+        "kSQLアクション",
+        "mcp"
+      ],
+      "source": {
+        "source": "archive",
+        "url": "https://github.com/rex0220/ksql-action-authoring/releases/download/v0.1.0/ksql-action-authoring-plugin-0.1.0.zip",
+        "sha256": "14fad37bbadb656246f40849041060d90eaa5a4d6af157a76aabb33c61e7a477"
+      }
+    }
+  ]
+}
