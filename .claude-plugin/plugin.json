@@ -25,13 +25,13 @@
     },
     "kintoneConfig": {
       "type": "string",
-      "title": "kintone の接続のファイル",
+      "title": "kSQL アクションプラグインの接続のファイル（kintone）",
       "description": "kSQL の ksql.config.json と同じ形のファイルの絶対パス（作業フォルダーの外に置く。kSQL と同じファイルでもよい）。空なら kintone を使うツール（kact_fields / kact_apps）は使えない",
       "required": false
     },
     "workspace": {
       "type": "string",
-      "title": "作業フォルダー（省略可）",
+      "title": "kSQL アクションの作業フォルダー（省略可）",
       "description": "設定ファイルを置くフォルダーの絶対パス。空なら Claude Code を起動したフォルダー（ふつうは空のままでよい）",
       "required": false
     }
