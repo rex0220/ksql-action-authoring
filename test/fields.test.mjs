@@ -145,6 +145,66 @@ test("listApps: 100 件に満たなければ 1 回で終わる", { skip }, async
 });
 
 // kSQL の ksql_describe_app を参考に、値の出どころ（SQL で書けるか）を返す
+// 一覧（ビュー）。kintone の作りつけの「(すべて)」は views.json に返らないので、ツールが viewId 20 を足す
+// （本体の設定画面 ksql-action/src/config/views.ts と同じ作り。2026-11-03 に開発環境で実機確認: 一覧を 1 つも
+//  作っていないアプリの views は空だった）
+const VIEWS = {
+  カレンダー: { type: "CALENDAR", name: "カレンダー", id: "1103", index: "2" },
+  一覧1: { type: "LIST", name: "一覧1", id: "1102", index: "1" },
+  "(作業者が自分)": { type: "LIST", builtinType: "ASSIGNEE", name: "(作業者が自分)", id: "1101", index: "0" },
+};
+
+test("listViews: 一覧の表示順に並べ、「(すべて)」を末尾に足す", { skip }, async () => {
+  const { impl, calls } = stubFetch({ "app/views.json": { views: VIEWS, revision: "9" } });
+  const r = await fields.listViews({ app: 1001 }, opt({ fetchImpl: impl }));
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  assert.equal(r.revision, "9");
+  assert.equal(r.preview, false);
+  assert.deepEqual(r.views, [
+    { id: "1101", name: "(作業者が自分)", type: "LIST", builtin: true },
+    { id: "1102", name: "一覧1", type: "LIST" },
+    { id: "1103", name: "カレンダー", type: "CALENDAR" },
+    { id: "20", name: "(すべて)", type: "LIST", builtin: true },
+  ]);
+  assert.ok(r.findings.some((f) => f.code === "views-all-added"), JSON.stringify(r.findings));
+  assert.deepEqual(calls.map((c) => c.method), ["GET"]);
+  assert.ok(calls[0].url.startsWith("https://example.cybozu.com/k/v1/app/views.json"), calls[0].url);
+});
+
+test("listViews: 一覧が 1 つも無くても「(すべて)」は返る", { skip }, async () => {
+  const { impl } = stubFetch({ "app/views.json": { views: {}, revision: "9" } });
+  const r = await fields.listViews({ app: 1001 }, opt({ fetchImpl: impl }));
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  assert.deepEqual(r.views, [{ id: "20", name: "(すべて)", type: "LIST", builtin: true }]);
+});
+
+test("listViews: API が viewId 20 を返しても重ねない", { skip }, async () => {
+  const { impl } = stubFetch({ "app/views.json": { views: { すべて: { type: "LIST", name: "すべて", id: "20", index: "0" } } } });
+  const r = await fields.listViews({ app: 1001 }, opt({ fetchImpl: impl }));
+  assert.equal(r.views.filter((v) => v.id === "20").length, 1, JSON.stringify(r.views));
+});
+
+test("listViews: preview: true は動作テスト環境を読む", { skip }, async () => {
+  const { impl, calls } = stubFetch({ "preview/app/views.json": { views: VIEWS } });
+  const r = await fields.listViews({ app: 1001, preview: true }, opt({ fetchImpl: impl }));
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  assert.equal(r.preview, true);
+  assert.ok(calls[0].url.includes("/k/v1/preview/app/views.json"), calls[0].url);
+});
+
+test("listViews: 400（同じ名前の一覧）のときはその旨を findings に足す", { skip }, async () => {
+  const text = JSON.stringify({ code: "GAIA_IL26", message: "同じ名前の一覧があります" });
+  const impl = async () => ({
+    ok: false,
+    status: 400,
+    headers: { get: () => String(Buffer.byteLength(text)) },
+    body: { getReader: () => { let done = false; return { read: async () => (done ? { done: true } : ((done = true), { done: false, value: new TextEncoder().encode(text) })), cancel: async () => {} }; } },
+  });
+  const r = await fields.listViews({ app: 1001 }, opt({ fetchImpl: impl }));
+  assert.equal(r.status, "failed");
+  assert.ok(r.findings.some((f) => f.code === "views-duplicate-name"), JSON.stringify(r.findings));
+});
+
 test("summarizeFields: 自動の項目・計算・ルックアップのコピー先に writable: false を付ける", { skip }, () => {
   const props = {
     レコード番号: { type: "RECORD_NUMBER", code: "レコード番号", label: "番号" },

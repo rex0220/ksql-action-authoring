@@ -121,6 +121,35 @@ export interface AppsResult {
   message?: string;
 }
 
+/** 一覧 1 つ分（`panel.views[].viewId` に書く値は `id`） */
+export interface ViewSummary {
+  /** 一覧 ID（文字列。実行時に `event.viewId` と突き合わせる） */
+  id: string;
+  name: string;
+  /** `LIST` / `CALENDAR` / `CUSTOM`（知らない種類はそのまま） */
+  type: string;
+  /** kintone の作りつけの一覧（`(すべて)`・`(作業者が自分)`）。ツールが足した行にも付く */
+  builtin?: true;
+}
+
+export interface ViewsResult {
+  status: ToolStatus;
+  profile?: string;
+  host?: string;
+  appId?: number;
+  revision?: string;
+  preview?: boolean;
+  views?: ViewSummary[];
+  findings: Finding[];
+  message?: string;
+}
+
+/**
+ * 「(すべて)」の一覧の ID（kintone の作りつけ。**`views.json` には返らない**）。
+ * 本体の設定画面（`ksql-action/src/config/views.ts` の `ALL_VIEW_ID`）と同じ値で、あちらが正本
+ */
+export const ALL_VIEW_ID = "20";
+
 const fail = (code: string, message: string, status: ToolStatus = "failed"): { status: ToolStatus; findings: Finding[] } => ({
   status,
   findings: [{ level: "error", code, message }],
@@ -349,6 +378,78 @@ export async function fetchFields(input: { app: number; profile?: string; previe
     fields,
     findings: connectionWarnings(set),
     message: `項目定義を ${rel} に置いた（${fields.length} 項目）。SQL と計算式には**項目コード**を書く`,
+  };
+}
+
+/** `app/views` が返す 1 件（知らないキーは読まない） */
+interface RawView {
+  id?: string;
+  index?: string | number;
+  name?: string;
+  type?: string;
+  builtinType?: string;
+}
+
+/**
+ * 一覧の ID を取る（`kact_views`）。`panel.views[].viewId` に書く値を調べるためのもの。
+ *
+ * **「(すべて)」は `views.json` に返らない**ので、ツールが `viewId: "20"` の行を**末尾に足す**
+ * （本体の設定画面 `ksql-action/src/config/views.ts` と同じ作り。あちらが正本）。
+ * 一覧（`LIST`）だけでなくカレンダー・カスタマイズ一覧も返す（一覧パネルはそれらのヘッダーにも出る）。
+ */
+export async function listViews(input: { app: number; profile?: string; preview?: boolean }, opt: KintoneOptions = {}): Promise<ViewsResult> {
+  if (!Number.isSafeInteger(input.app) || input.app <= 0) return { ...fail("input", "app はアプリの番号（正の整数）で渡す", "invalid") };
+  let conn: { set: ConnectionSet; def: ProfileDef };
+  try {
+    conn = connectionFor(input.profile, opt);
+  } catch (e) {
+    return { ...fromConnectionError(e) };
+  }
+  const { set, def } = conn;
+  let resp: { views?: Record<string, RawView>; revision?: string } = {};
+  try {
+    const client = createRestClient(authFor(set, def, input.app), opt.fetchImpl);
+    resp = await client.get<{ views?: Record<string, RawView>; revision?: string }>(
+      input.preview ? "preview/app/views" : "app/views",
+      { app: input.app },
+      def.guestSpaceId ?? undefined,
+    );
+  } catch (e) {
+    const r = fromConnectionError(e);
+    // 同じ名前の一覧があると kintone は設定を返さない（REST の「一覧の設定を取得する」の制限事項）。
+    // 400 で返るので、名前の重複をまず疑ってもらう
+    const hint: Finding[] =
+      e instanceof RestError && e.status === 400
+        ? [{ level: "info", code: "views-duplicate-name", message: "**同じ名前の一覧があると kintone は一覧の設定を返さない**（REST の制限）。アプリの一覧の名前が重なっていないか確かめる" }]
+        : [];
+    return { ...r, findings: [...r.findings, ...hint], profile: def.profile, host: def.host };
+  }
+  const raw = Object.values(resp.views ?? {});
+  const items = raw
+    .filter((v) => v.id !== undefined)
+    .map((v) => ({ id: String(v.id), name: String(v.name ?? ""), type: String(v.type ?? ""), index: Number(v.index ?? 0), builtin: v.builtinType !== undefined }))
+    .sort((a, b) => a.index - b.index);
+  const views: ViewSummary[] = [];
+  for (const v of items) if (v.id !== ALL_VIEW_ID) views.push({ id: v.id, name: v.name, type: v.type, ...(v.builtin ? { builtin: true as const } : {}) });
+  // 「(すべて)」は API に返らないので足す（本体の設定画面も同じ。末尾に置く）
+  views.push({ id: ALL_VIEW_ID, name: "(すべて)", type: "LIST", builtin: true });
+  return {
+    status: "ok",
+    profile: def.profile,
+    host: def.host,
+    appId: input.app,
+    revision: String(resp.revision ?? ""),
+    preview: !!input.preview,
+    views,
+    findings: [
+      ...connectionWarnings(set),
+      {
+        level: "info",
+        code: "views-all-added",
+        message: `kintone の作りつけの「(すべて)」（viewId ${ALL_VIEW_ID}）は API に返らないので、ツールが末尾に足した。${input.preview ? "" : "運用環境の一覧を読んだ（設定画面が見るのは動作テスト環境。未反映の一覧も要るなら preview: true）"}`,
+      },
+    ],
+    message: `一覧 ${views.length} 件。panel.views の "*"（ほかの一覧すべて）の行だけで足りるなら足さない。どの一覧を別扱い（パネル / メニュー / 出さない）にするかは**利用者に確かめる**`,
   };
 }
 

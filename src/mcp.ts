@@ -8,7 +8,7 @@
  * - 環境変数 `KACT_KINTONE_CONFIG` … kintone の接続のファイル（kSQL の ksql.config.json と同じ形。**作業フォルダーの外**）
  *
  * 守ること:
- * - **kintone へは GET だけ**（`kact_fields` / `kact_apps`。許す API は `kintone-rest.ts` に固定。レコードは読まない）
+ * - **kintone へは GET だけ**（`kact_fields` / `kact_apps` / `kact_views`。許す API は `kintone-rest.ts` に固定。レコードは読まない）
  * - ファイルは作業フォルダーからの**相対パス**だけ。`..`・絶対パス・symlink の外は拒否
  * - **SQL 本文・値・秘密の値は返さない**（一覧は要約だけ）。接続のファイルの場所と中身も返さない
  */
@@ -20,7 +20,7 @@ import { checkConfig,
   explainAction, listActions, statusOf } from "./core.ts";
 import { resolveInWorkspace, workspaceStatus, WorkspaceError } from "./workspace.ts";
 import { deleteAction, digestOf, filesOf, pullConfig, saveConfig, updateAction } from "./save.ts";
-import { connectionReport, fetchFields, findFieldsFile, listApps, type KintoneOptions } from "./fields.ts";
+import { connectionReport, fetchFields, findFieldsFile, listApps, listViews, type KintoneOptions } from "./fields.ts";
 import { diffConfigs } from "./diff.ts";
 import { toolsMeta } from "./meta.ts";
 import { DOCS, indexText, search, sectionKeys, sectionOf, sectionText } from "./docs.ts";
@@ -271,6 +271,24 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
   );
 
   server.registerTool(
+    "kact_views",
+    {
+      title: "kact: kintone の一覧（ビュー）を取る",
+      description:
+        "アプリの一覧（ビュー）の ID・名前・種類を kintone から**読み取り（GET）だけ**で返す。**panel.views に一覧ごとの行（この一覧だけパネル / メニュー / 出さない）を書くときに使う**。" +
+        "kintone の作りつけの「(すべて)」（viewId 20）は**API に返らないので、ツールが末尾に足す**。カレンダー・カスタマイズ一覧も返す（一覧パネルはそれらのヘッダーにも出る）。" +
+        "レコードは読まない。**どの一覧を別扱いにするかは一覧から推測せず、利用者に確かめる**（`\"*\"` の行だけで足りるなら足さない）。",
+      inputSchema: {
+        app: z.number().int().positive().describe("アプリの番号（利用者に聞く。推測しない）"),
+        profile: z.string().min(1).max(40).optional().describe("接続のファイルの profile（省略すると defaultProfile）"),
+        preview: z.boolean().optional().describe("動作テスト環境（保存して未反映）の一覧。設定画面が見るのはこちら。アプリ管理権限が要る"),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ app, profile, preview }) => json(await listViews({ app, ...(profile ? { profile } : {}), ...(preview ? { preview } : {}) }, kintoneOptions())),
+  );
+
+  server.registerTool(
     "kact_apps",
     {
       title: "kact: アプリの一覧",
@@ -301,7 +319,7 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
         file: z.string().min(1).max(200).describe("作業フォルダーからの相対パス（.json。例 settings/kact-1001.json）"),
         appId: z.number().int().positive().describe("取り込む先のアプリ ID（推測せず利用者に聞く）"),
         appName: z.string().max(200).optional().describe("アプリ名（封筒の表示だけに使う）"),
-        config: z.record(z.unknown()).describe("設定の本体（configVersion / bindings / limits / timezone / actions）か封筒ごと。形は kact_docs の section config"),
+        config: z.record(z.unknown()).describe("設定の本体（configVersion / bindings / logApp / limits / timezone / panel / actions）か封筒ごと。一覧画面に出すなら panel も要る。形は kact_docs の section config"),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },

@@ -93,9 +93,10 @@ claude plugin validate . && claude plugin test .   # プラグインの形と、
 | `kact_pull` | 設定画面でダウンロードした設定を作業フォルダーに写す（**元は残す**） | 作業フォルダー |
 | `kact_fields` | kintone の項目定義を**読み取り（GET）だけ**で取り、控えて要約（コード・型・ラベル・重複禁止・テーブルの子・**SQL で書ける項目か**）を返す。取った後は計算式を**項目コードまで検査**する | kintone（GET）＋ 作業フォルダー |
 | `kact_apps` | アプリの一覧（`name` で名前を絞れる。続きはツールが読んで集める。**ログイン名とパスワードの接続のときだけ**） | kintone（GET） |
+| `kact_views` | 一覧（ビュー）の ID・名前・種類（`panel.views` に一覧ごとの行を書くとき。「(すべて)」は API に返らないのでツールが足す） | kintone（GET） |
 
 **kintone には何も書きません。** 書くのは作業フォルダーの中だけで、取り込みと実行は利用者が設定画面で行います。
-kintone に送るのは `kact_fields` / `kact_apps` の **GET** だけで、送れるパスは固定しています（`src/kintone-rest.ts` の `ALLOWED_APIS`。レコードは読みません）。
+kintone に送るのは `kact_fields` / `kact_apps` / `kact_views` の **GET** だけで、送れるパスは固定しています（`src/kintone-rest.ts` の `ALLOWED_APIS`。レコードは読みません）。
 
 ### 保存の約束
 
@@ -111,9 +112,9 @@ kintone に送るのは `kact_fields` / `kact_apps` の **GET** だけで、送�
 | `--surface claude-code \| desktop` | 出すツールの出し分け |
 | `KACT_PLUGIN_ZIP` | kSQL アクションプラグインの zip の場所 |
 | `KACT_WORKSPACE` | 作業フォルダー（省略時は起動したフォルダー） |
-| `KACT_KINTONE_CONFIG` | kintone の接続のファイル（kSQL の `ksql.config.json` と同じ形。**作業フォルダーの外**に置く。省略すると `kact_fields` / `kact_apps` は使えない） |
+| `KACT_KINTONE_CONFIG` | kintone の接続のファイル（kSQL の `ksql.config.json` と同じ形。**作業フォルダーの外**に置く。省略すると `kact_fields` / `kact_apps` / `kact_views` は使えない） |
 
-### kintone の接続（`kact_fields` / `kact_apps` だけが使う）
+### kintone の接続（`kact_fields` / `kact_apps` / `kact_views` だけが使う）
 
 接続のファイルは **kSQL の `ksql.config.json` と同じ形**です（計算式プラグイン・印刷屋のオーサリングと共通）。
 **kSQL（kSQL Dashboard Pro など）を使っていれば、その `ksql.config.json` をそのまま使えます。**
@@ -136,7 +137,7 @@ kintone に送るのは `kact_fields` / `kact_apps` の **GET** だけで、送�
 
 - 読むキーは `defaultProfile` と `profiles.<名前>` の `baseUrl` / `guestSpaceId` / `auth` / `username` / `password` / `passwordEnv` / `tokenMap` だけ（kSQL のほかのキーは読まずに通す）。
 - 読む環境変数は、**このファイルが名前を書いた `env:` と `passwordEnv` だけ**。
-- **GET だけ**（`app` / `apps` / `app/form/fields` / `preview/app/form/fields`）。レコードは読まない。
+- **GET だけ**（`app` / `apps` / `app/form/fields` / `preview/app/form/fields` / `app/views` / `preview/app/views`）。レコードは読まない。
 - 接続のファイルの**場所も中身も秘密の値も返しません**（返すのはファイル名・profile 名・接続先のホストまで）。
 
 ## ライセンス

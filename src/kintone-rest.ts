@@ -7,7 +7,8 @@
  *   - エラーの文言は HTTP の状態と kintone のコードと固定のヒントだけ（サーバーの message は出さない。認証情報とレコードの中身を混ぜない）
  *
  * kSQL アクションでは**レコードを読まない**ので、印刷屋の一覧から record / records / layout / plugin/config を外し、
- * アプリの一覧（apps）を足した。設定を作るのに要るのは**項目定義とアプリの名前**だけ（実装計画 5 章）。
+ * アプリの一覧（apps）と一覧の設定（app/views）を足した。設定を作るのに要るのは
+ * **項目定義・アプリの名前・一覧の ID** だけ（実装計画 5 章）。
  */
 import { KintoneUrlError, normalizeKintoneBaseUrl } from "./kintone-url.ts";
 
@@ -20,7 +21,7 @@ export interface KintoneAuth {
 }
 
 /** 許可する API（/k/v1/ と /k/guest/<id>/v1/ の後ろ）。ここに無いパスは送信前に止める */
-export const ALLOWED_APIS = ["app", "apps", "app/form/fields", "preview/app/form/fields"] as const;
+export const ALLOWED_APIS = ["app", "apps", "app/form/fields", "preview/app/form/fields", "app/views", "preview/app/views"] as const;
 
 /**
  * 受け取る本文の上限（バイト。印刷屋と同じ考え）。項目が多いアプリ（500 前後、テーブルが多い）でも引っかからない値にする。
@@ -30,7 +31,10 @@ export const RECEIVE_LIMITS: Record<(typeof ALLOWED_APIS)[number], number> = {
   app: 64 * 1024,
   apps: 1024 * 1024,
   "app/form/fields": 8 * 1024 * 1024,
-  "preview/app/form/fields": 8 * 1024 * 1024
+  "preview/app/form/fields": 8 * 1024 * 1024,
+  // 一覧の設定。カスタマイズ一覧は HTML を丸ごと返すので、項目定義ほどではないが余裕を取る
+  "app/views": 4 * 1024 * 1024,
+  "preview/app/views": 4 * 1024 * 1024
 };
 export type AllowedApi = (typeof ALLOWED_APIS)[number];
 

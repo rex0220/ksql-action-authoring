@@ -66,7 +66,9 @@ zip の読み取り（2 層・zip bomb・CRC の確認）、エンジンの読�
 
 ## kintone への通信（段階 3）
 
-- 送るのは **GET だけ**。送れるパスは `src/kintone-rest.ts` の `ALLOWED_APIS`（`app` / `apps` / `app/form/fields` / `preview/app/form/fields`）に固定で、**レコードは読まない**。
+- 送るのは **GET だけ**。送れるパスは `src/kintone-rest.ts` の `ALLOWED_APIS`（`app` / `apps` / `app/form/fields` / `preview/app/form/fields` / `app/views` / `preview/app/views`）に固定で、**レコードは読まない**。
+- `kact_views`（一覧の ID）は、**「(すべて)」が `views.json` に返らない**ので `viewId: "20"` の行を末尾に足す。
+  本体の設定画面（`ksql-action/src/config/views.ts` の `ALL_VIEW_ID`）と同じ作りで、**あちらが正本**。
 - 接続は `src/connections.ts`（接続のファイルの profile だけ）。**ファイルの場所・中身・秘密の値は返さない**（返すのはファイル名・profile 名・ホストまで）。
   接続のファイルが**作業フォルダーの中**にあれば `denied`。
 - `kact_fields` が置く `fields/<profile>/APP<番号>.json` は**ツールが作る控え**で、設定ファイルではない（取り直すと上書きする）。
