@@ -110,6 +110,7 @@
 | `event_create` | 保存後（追加） | record のみ |
 | `event_edit` | 保存後（編集。一覧のインライン編集を含む） | record のみ |
 | `event_status` | ステータス変更（遷移が確定した後の詳細画面で実行） | record のみ |
+| `event_delete` | **削除したあと**（削除する前に控えを取り、削除が成功してから実行） | record のみ |
 
 **一覧画面に出す道**（2026-10-31 に `index_menu` / `index_panel` をやめた）: アクション側は `onList`（種類 record）か
 種類 `app` で「一覧画面に出る」ことだけを決め、**どの一覧にどう出すか（パネル / メニュー / 出さない）は共通設定の `panel`** で決めます。
@@ -134,6 +135,7 @@
 
 **イベント起動の決まり**: 確認なし（`confirm: false`）＋ `writeLimit` 必須 ＋ `inputs` なし ＋ `showCond` は効かない。
 イベントは**ブラウザーの操作だけ**で動きます（REST API・CSV 読み込みでは動かない）。
+`event_delete` も画面から消したときだけ動きます。**削除は非推奨**で、アプリに「削除フラグ」を持たせて集計から外す形を勧めます。
 
 ## パラメーターと入力項目
 
@@ -158,6 +160,52 @@ SQL の `DECLARE` 1 本につき **`params` の行が 1 つ**要ります（予�
 - `options` を書くのは `type` が **`select`** か **`relative_date`** のときだけです。どちらも**選択肢**として出るので、
   空のままだと利用者は何も選べません（`relative_date` では、許す日付関数のトークンを並べます）。
 - `type: "relative_date"` の入力項目と対になる `DECLARE` は、`RELATIVE_DATE` 注釈つきで書きます（`sql`）。
+
+### キーの配列（`source: "keys"`）
+
+**その起動で関係するレコードすべて**に式を当て、重複と空を落として**配列**で渡します。
+キーの項目（顧客コードなど）を直したとき・レコードを消したときに、**新旧のキーを 1 回の実行でまとめて**渡すための源泉です。
+
+| 起動 | 配列の中身 |
+|---|---|
+| ボタン・一覧の 1 件ずつ | `[そのレコード]` |
+| 一覧の「まとめて 1 回」「グループごと」 | 選んだレコード全部 |
+| `event_create` | `[新しい値]` |
+| `event_edit` | `[変更後, 変更前]`（控えがあるとき。同じなら 1 件） |
+| `event_delete` | `[消したレコードの値]` |
+
+```jsonc
+"params": [{ "name": "keys", "source": "keys", "formula": "顧客コード" }]
+```
+
+```sql
+DECLARE @keys = [];   -- 配列で宣言する（`pKeysNotArray`）
+DECLARE @now = '';    -- 集計日時は計算式のパラメーターで渡す（DATE_FORMAT(NOW(), "YYYY-MM-DDTHH:mm:ssZ")）
+
+-- 今の集計を「0 の行」として足してから集計する（消す文も 0 にする文も無いので、途中で失敗しても壊れない）
+CREATE TEMP TABLE #t AS
+SELECT 顧客コード, COUNT(*) AS 件数, SUM(金額) AS 売上
+  FROM LAPP_受注 WHERE 顧客コード IN @keys GROUP BY 顧客コード
+UNION ALL
+SELECT 顧客コード, 0 AS 件数, 0 AS 売上
+  FROM LAPP_集計 WHERE 顧客コード IN @keys;
+
+UPSERT INTO LAPP_集計 (顧客コード, 件数, 売上, 集計日時)
+SELECT 顧客コード, SUM(件数) AS 件数, SUM(売上) AS 売上, @now AS 集計日時
+  FROM #t GROUP BY 顧客コード
+ON DUPLICATE (顧客コード);
+
+-- 行を残したくないときは、集計のあとで 0 の行だけ消す
+DELETE FROM LAPP_集計 WHERE 顧客コード IN @keys AND 件数 = 0;
+```
+
+- **先に `UPDATE … SET 件数 = 0` で埋める形は勧めません**（書き込みが 2 倍、0 にしたあとで失敗すると 0 のまま残る）。
+- **`@NOW()` は `SELECT` の列に書けません**。日時は `DATE_FORMAT(NOW(), …)` か `DATE_FORMAT("TODAY", …)` で渡します（計算式の `"TODAY"` は**現在日時**を返します）。`"NOW"` というトークンは無く、`DATE_FORMAT("NOW", …)` は `Invalid date` になります。
+
+- **式が要ります**（空だと `pKeysFormula`）。対応する `DECLARE` は**配列**で書きます（`pKeysNotArray`）。
+- 配列で宣言できるのは `_selected` とこの源泉だけです（ほかは `pArrayOnlySelected`）。
+- 配列が**空**のときは実行しません。**空配列の `NOT IN` は全件**になるので、絞りは `IN @keys` 側に書いてください。
+- `IN @keys` は読み取りにも書き込み（`UPDATE` / `DELETE` の `WHERE`）にも使えます。
 - **数値で宣言した `DECLARE`**（`DECLARE @amount = 0;`）と対になる入力項目は **`type: "number"`**（または選択肢がすべて数で書かれた `"select"`）にします。
   `"text"` / `"date"` / `"datetime"` を当てると `pInputTypeMismatch` で**保存できません**。注入するのは文字列なので、
   文字を当てると**実行時には止まらず、そのまま条件に載る**（`金額 >= "abc"` が 0 件を返す）ためです。
