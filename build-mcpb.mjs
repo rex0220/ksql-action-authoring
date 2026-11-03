@@ -51,6 +51,10 @@ export const manifest = {
   description: "kintone の kSQL アクションプラグイン（rex0220 kSQL Action）の設定 JSON を、検査と実行計画を通して作業フォルダーに保存・確認する。kintone には読み取り（GET）だけ",
   author: { name: "rex0220" },
   license: "MIT",
+  // 拡張機能の一覧に出すアイコン。指定しないと display_name の先頭 1 文字（= K）で
+  // 代用アイコンが作られ、kSQL MCP と同じ「K」になって見分けが付かない（2026-11-03）。
+  // 白地に「動」だけの絵（角丸の枠は Claude Desktop が描く。計算式 = 計、印刷屋 = 印 と同じ並び）
+  icon: "icon.png",
   homepage: REPO_URL,
   repository: { type: "git", url: REPO_URL },
   support: `${REPO_URL}/issues`,
@@ -110,6 +114,7 @@ kintone の kSQL アクションプラグイン（rex0220 kSQL Action。Ver.1 �
 function files() {
   return [
     { path: "manifest.json", data: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8") },
+    { path: "icon.png", data: readFileSync(join(root, "assets", "icon.png")) },
     { path: "server/mcp.mjs", data: readFileSync(join(dist, "mcp.mjs")) },
     { path: "vendor/moment-with-locales.min.js", data: readFileSync(join(root, "vendor", "moment-with-locales.min.js")) },
     { path: "vendor/moment.json", data: readFileSync(join(root, "vendor", "moment.json")) },

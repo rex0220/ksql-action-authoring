@@ -29,7 +29,7 @@ function assert(cond, message) {
 async function main() {
   assert(existsSync(ZIP), `kSQL アクションプラグインの zip が無い: ${ZIP}（KACT_TEST_PLUGIN_ZIP で指す）`);
   const entries = readZip(mcpbPath);
-  const expected = ["manifest.json", "server/mcp.mjs", "vendor/moment-with-locales.min.js", "vendor/moment.json", "LICENSE", NOTICES_FILE, "README.md"];
+  const expected = ["manifest.json", "icon.png", "server/mcp.mjs", "vendor/moment-with-locales.min.js", "vendor/moment.json", "LICENSE", NOTICES_FILE, "README.md"];
   assert(JSON.stringify([...entries.keys()].sort()) === JSON.stringify([...expected].sort()), `中身が違う: ${[...entries.keys()].join(", ")}`);
   const problems = problemsOf(entries);
   assert(!problems.length, `入れてはいけないもの:\n  ${problems.join("\n  ")}`);
