@@ -20,7 +20,7 @@ export const KSQL_ACTION_PLUGIN_ID = "afkekkiffjhdkcepekecalklafjhbcmf";
 /** tools が扱う kSQL アクションの版の下限（manifest.json の version。authoring API は Ver.1 から同梱） */
 export const MIN_PLUGIN_VERSION = 1;
 /** tools が対応する authoring API の版（ksql-action の src/authoring/api.ts の AUTHORING_API_VERSION） */
-export const SUPPORTED_API_VERSIONS: readonly number[] = [1, 2, 3];
+export const SUPPORTED_API_VERSIONS: readonly number[] = [1, 2, 3, 4];
 
 /** kSQL アクションの版として扱えるか（整数で MIN_PLUGIN_VERSION 以上） */
 export function isSupportedPluginVersion(version: string): boolean {
@@ -48,10 +48,17 @@ export const REQUIRED_API: Record<string, "function" | "object" | "string" | "nu
   buildExportData: "function", parseImport: "function"
 };
 
-/** その版の zip の API に要るキーと型（1・2 は REQUIRED_API だけ。3 以上は関連レコード一覧の分も） */
-export function requiredApiFor(_apiVersion: number): Record<string, "function" | "object" | "string" | "number"> {
-  // 版 1 だけなので同じ表。版が増えたら差分の表を足す（ksql-action の api.ts の AUTHORING_API_VERSION と対）
-  return REQUIRED_API;
+/** 版 4 で足した計算式の評価（`kact_try` が使う。実行時と同じコードを公開したもの） */
+export const API_V4: Record<string, "function"> = {
+  evalFormula: "function", evalCondition: "function", toParamValue: "function", withResultRecord: "function"
+};
+
+/**
+ * その版の zip の API に要るキーと型（ksql-action の api.ts の `AUTHORING_API_VERSION` と対）。
+ * **古い版の zip も動かす**（足した口を使うツールだけが「zip が古い」と断る）。
+ */
+export function requiredApiFor(apiVersion: number): Record<string, "function" | "object" | "string" | "number"> {
+  return apiVersion >= 4 ? { ...REQUIRED_API, ...API_V4 } : REQUIRED_API;
 }
 
 export interface ToolsMeta {

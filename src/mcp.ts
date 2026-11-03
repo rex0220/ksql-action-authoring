@@ -22,6 +22,7 @@ import { resolveInWorkspace, workspaceStatus, WorkspaceError } from "./workspace
 import { deleteAction, digestOf, filesOf, pullConfig, saveConfig, updateAction } from "./save.ts";
 import { connectionReport, fetchFields, findFieldsFile, listApps, listViews, type KintoneOptions } from "./fields.ts";
 import { diffConfigs } from "./diff.ts";
+import { tryFormulas } from "./try.ts";
 import { toolsMeta } from "./meta.ts";
 import { DOCS, indexText, search, sectionKeys, sectionOf, sectionText } from "./docs.ts";
 
@@ -268,6 +269,49 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async ({ app, profile, preview }) => json(await fetchFields({ app, ...(profile ? { profile } : {}), ...(preview ? { preview } : {}) }, kintoneOptions())),
+  );
+
+  server.registerTool(
+    "kact_try",
+    {
+      title: "kact: 式を試し計算する",
+      description:
+        "kact の計算式の口（表示条件 showCond・実行条件 execCond・パラメーター params[].formula・結果メッセージ resultMessage）に書く式を、**架空の値**で実際に評価して返す。" +
+        "返りの value は値、**condition は表示条件・実行条件として見たときの真偽**（\"0\" / \"false\" / 空は偽）、**param は SQL に注入される文字列**。" +
+        "評価はプラグイン本体の実行時と同じコード（authoring API 版 4 以降の zip が要る）。kintone には行かない（項目定義は kact_fields の控え）。" +
+        "資料にある関数の使い方をなぞるだけなら呼ばない。**動きの確認を求められたとき・資料に無い端の値（空・0・未選択）を断言するとき**に、10 式までまとめて 1 回。" +
+        "**値は架空のもの**を渡す（実在の個人情報・本番の値は入れない）。",
+      inputSchema: {
+        app: z.number().int().positive().optional().describe("自アプリの番号（kact_fields の控えを使う）。省略すると項目の無い文脈（種類 app と同じ）"),
+        context: z.enum(["record", "none"]).optional().describe("レコード文脈。省略は app があれば record。none は種類 app・「まとめて 1 回」・「グループごと」と同じ（項目を参照すると誤りになる）"),
+        data: z.record(z.unknown()).optional().describe("架空の値（項目コード → 値。テーブルは行の配列 [{ 子のコード: 値 }]）。書かない項目は空。実在の個人情報を入れない"),
+        result: z.record(z.union([z.string(), z.number()])).optional().describe("結果メッセージを試すときの _result_* の値（例 { _result_updated: 4, _result_status: \"success\" }）。渡すと _result_* が使える文脈になる"),
+        user: z
+          .object({ code: z.string().optional(), name: z.string().optional(), id: z.string().optional(), email: z.string().optional() })
+          .optional()
+          .describe("ログインユーザー（LOGIN_INFO を使う式のとき。架空の値）"),
+        formulas: z
+          .array(z.object({ formula: z.string().min(1).max(4000), as: z.enum(["value", "condition", "param"]).optional() }))
+          .min(1)
+          .max(10)
+          .describe("式（1〜10 本。式ごとに独立に評価する）。as は読み方の目安で、評価はどれも同じ"),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ app, context, data, result, user, formulas }) =>
+      json(
+        await tryFormulas(
+          {
+            ...(app !== undefined ? { app } : {}),
+            ...(context ? { context } : {}),
+            ...(data ? { data } : {}),
+            ...(result ? { result } : {}),
+            ...(user ? { user } : {}),
+            formulas,
+          },
+          zipOptions(),
+        ),
+      ),
   );
 
   server.registerTool(

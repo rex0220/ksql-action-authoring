@@ -168,7 +168,7 @@ const UNKNOWN_NAME = /FIELD CODE NOT FOUND:\s*([\s\S]*)$/;
 const NOT_A_FIELD_CODE = /[\s"'。、，．！？!?]/;
 
 /** 計算式の文脈（`loadFormulaContext` が作る形。アクションの種類で使い分ける） */
-interface FormulaContexts {
+export interface FormulaContexts {
   record: { pp: unknown; crec: unknown };
   none: { pp: unknown; crec: unknown };
   result: (base: "record" | "none") => { pp: unknown; crec: unknown };
@@ -179,7 +179,7 @@ interface FormulaContexts {
  * ところを写さないため）。`loadFormulaContext` は `/k/v1/preview/app/form/fields` を 1 回だけ読むので、
  * kintone に行かず控え（`kact_fields` が置いた properties）を返す偽の client を渡す。
  */
-async function contextsFrom(engine: Engine, properties: Record<string, unknown>, appId: number): Promise<FormulaContexts> {
+export async function contextsFrom(engine: Engine, properties: Record<string, unknown>, appId: number): Promise<FormulaContexts> {
   const client = { api: async () => ({ properties }) };
   return (await engine.api.loadFormulaContext(client as never, appId)) as unknown as FormulaContexts;
 }

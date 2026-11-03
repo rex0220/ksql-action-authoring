@@ -18,7 +18,8 @@
 ## 版の対応
 
 - `src/meta.ts` の `SUPPORTED_API_VERSIONS` は、本体（`ksql-action/src/authoring/api.ts`）の `AUTHORING_API_VERSION` と対で保つ。
-  本体が API の名前や引数を変えて版を上げたら、ここに足して試験を流す（今は **[1, 2, 3]**。版 2 = 封筒を migrate してから検証する `parseConfigFile`、版 3 = 実行計画の `explainActionSql` と、控えだけで動く `createFieldsClient`）。
+  本体が API の名前や引数を変えて版を上げたら、ここに足して試験を流す（今は **[1, 2, 3, 4]**。版 2 = 封筒を migrate してから検証する `parseConfigFile`、版 3 = 実行計画の `explainActionSql` と、控えだけで動く `createFieldsClient`、版 4 = 計算式の**評価**（`evalFormula` / `evalCondition` / `toParamValue` / `withResultRecord`。`kact_try` が使う））。
+  **古い版の zip も動かす**（`requiredApiFor` は版ごとに要るキーを変え、足した口を使うツールだけが「zip が古い」と断る）。
   **埋め込む meta（`scripts/build.mjs` の `__KACT_TOOLS_META__`）は `src/meta.ts` から読む**。書き写すと食い違う
   （2026-10-31 に `supportedApiVersions: [1]` が残っていて、版 2 の zip を MCP が拒んだ）。
 - `MIN_PLUGIN_VERSION` は、オーサリング API を同梱した最初のプラグインの版（Ver.1）。
@@ -56,6 +57,16 @@
 `src/plugin-zip.ts` / `src/engine.ts` / `src/meta.ts` / `src/paths.ts` / `src/commit-file.ts` / `src/line-diff.ts` / `src/connections.ts` / `src/kintone-rest.ts` / `src/kintone-url.ts` は、**印刷屋のオーサリング tools（`print-craft-authoring/tools`。MIT・同じ作者）から写して直したもの**です（`commit-file.ts` はロックの名前だけ、`line-diff.ts` と `kintone-url.ts` はそのまま）。
 zip の読み取り（2 層・zip bomb・CRC の確認）、エンジンの読み込み（happy-dom、`moment` → `moment-timezone` → `bignumber` → `decimal` → 計算式エンジン → オーサリング API の順、`kintone` と `cybozu` のスタブ）、**ファイルの確定とロック**、**接続のファイルの読み取りと GET だけの REST** の作りは向こうが正本です（Codex のレビューを何度も通している）。
 直すときは向こうの変更も見る。
+
+## 式の試し計算（`kact_try`）
+
+- 評価は**本体の API（版 4）に任せる**（`evalFormula` / `evalCondition` / `toParamValue` / `withResultRecord`。
+  実行時の `ksql-action/src/desktop/formula-run.ts` をそのまま公開したもの）。
+  **真偽の判定（`"0"` / `"false"` / 空は偽）と数値の文字列化を tools に写さない**。写すと本物とずれ、
+  `kact_try` で確かめたい動きそのものが嘘になる（2026-11-03。選択式ルックアップテーブル Ver.15 の退行と同じ罠）。
+- 文脈（`pp` / `crec`）は本体の `loadFormulaContext` が作る（`core.ts` の `contextsFrom`）。**値だけ**を `src/try.ts` が差し込む。
+- `src/kintone-global.d.ts` は、本体の `formula-run.ts` が使う `kintone` グローバルの**型の解決のためだけ**に置いてある
+  （tools は `kintone` を呼ばない。評価の関数は `pp` と `record` を引数で受ける）。
 
 ## 実行計画（段階 4）
 
