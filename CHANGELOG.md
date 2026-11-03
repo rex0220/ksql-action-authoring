@@ -2,7 +2,7 @@
 
 kact（Claude Desktop の拡張機能「kSQL アクション 設定オーサリング」と、Claude Code のプラグイン `ksql-action`）の、利用者に見える変更です。新しい版が上です。
 
-## 0.1.0（未公開）
+## 0.1.0（2026-11-03）
 
 はじめての版。kSQL アクションプラグイン（rex0220 kSQL Action）Ver.1 以降の設定を作る 14 のツール。
 
