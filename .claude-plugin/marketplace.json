@@ -23,8 +23,8 @@
       ],
       "source": {
         "source": "archive",
-        "url": "https://github.com/rex0220/ksql-action-authoring/releases/download/v0.2.0/ksql-action-authoring-plugin-0.2.0.zip",
-        "sha256": "d29e5bd03109cbd8e9a84f95726f8d505bcd92a8b19cbd966cb078a421faf3bb"
+        "url": "https://github.com/rex0220/ksql-action-authoring/releases/download/v0.3.0/ksql-action-authoring-plugin-0.3.0.zip",
+        "sha256": "24210dca8b8c9d788290a95d51616cfeb554eb9f4034f5c5fef5aa234405c0a2"
       }
     }
   ]
