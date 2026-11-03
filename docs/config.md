@@ -158,6 +158,10 @@ SQL の `DECLARE` 1 本につき **`params` の行が 1 つ**要ります（予�
 - `options` を書くのは `type` が **`select`** か **`relative_date`** のときだけです。どちらも**選択肢**として出るので、
   空のままだと利用者は何も選べません（`relative_date` では、許す日付関数のトークンを並べます）。
 - `type: "relative_date"` の入力項目と対になる `DECLARE` は、`RELATIVE_DATE` 注釈つきで書きます（`sql`）。
+- **数値で宣言した `DECLARE`**（`DECLARE @amount = 0;`）と対になる入力項目は **`type: "number"`**（または選択肢がすべて数で書かれた `"select"`）にします。
+  `"text"` / `"date"` / `"datetime"` を当てると `pInputTypeMismatch` で**保存できません**。注入するのは文字列なので、
+  文字を当てると**実行時には止まらず、そのまま条件に載る**（`金額 >= "abc"` が 0 件を返す）ためです。
+  数値の条件に文字で絞らせたいときは、`DECLARE` を文字列（`= ''`）にして SQL の側で使い方を合わせます。
 
 ## 容量
 
