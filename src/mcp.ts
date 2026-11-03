@@ -284,7 +284,7 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
       inputSchema: {
         app: z.number().int().positive().optional().describe("自アプリの番号（kact_fields の控えを使う）。省略すると項目の無い文脈（種類 app と同じ）"),
         context: z.enum(["record", "none"]).optional().describe("レコード文脈。省略は app があれば record。none は種類 app・「まとめて 1 回」・「グループごと」と同じ（項目を参照すると誤りになる）"),
-        data: z.record(z.unknown()).optional().describe("架空の値（項目コード → 値。テーブルは行の配列 [{ 子のコード: 値 }]）。書かない項目は空。実在の個人情報を入れない"),
+        data: z.record(z.unknown()).optional().describe("架空の値（項目コード → 値。チェックボックス・複数選択は配列、テーブルは行の配列 [{ 子のコード: 値 }]）。書かない項目は空。**選択肢に無い値は invalid で名指し**。実在の個人情報を入れない"),
         result: z.record(z.union([z.string(), z.number()])).optional().describe("結果メッセージを試すときの _result_* の値（例 { _result_updated: 4, _result_status: \"success\" }）。渡すと _result_* が使える文脈になる"),
         user: z
           .object({ code: z.string().optional(), name: z.string().optional(), id: z.string().optional(), email: z.string().optional() })

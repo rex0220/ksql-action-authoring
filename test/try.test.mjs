@@ -32,7 +32,8 @@ writeFileSync(
     revision: "1",
     preview: false,
     properties: {
-      確認済: { type: "CHECK_BOX", code: "確認済", label: "確認済", options: { Y: { label: "Y", index: "0" } } },
+      // 複数選択のときの動きも見るので、選択肢は 2 つにしてある（実機の 4399 は "Y" だけ）
+      確認済: { type: "CHECK_BOX", code: "確認済", label: "確認済", options: { A: { label: "A", index: "0" }, Y: { label: "Y", index: "1" } } },
       担当: { type: "SINGLE_LINE_TEXT", code: "担当", label: "担当" },
       金額: { type: "NUMBER", code: "金額", label: "金額" },
       点検日: { type: "DATE", code: "点検日", label: "点検日" },
@@ -117,6 +118,44 @@ test("kact_try: 評価に失敗した式だけが ok: false（ほかは止めな
   assert.equal(r.status, "ok", JSON.stringify(r.findings));
   assert.equal(r.results[0].ok, false);
   assert.equal(r.results[1].value, "ok");
+});
+
+// チェックボックスは = で比べると単一選択のときしか合わない（複数だと "A,Y" との比較になる）。
+// 2026-11-03 に実機の控えで測った値を固定する（資料 docs/formula.md の表の根拠）
+test("kact_try: チェックボックスは IN で判定する（= は複数選択で外れる）", { skip }, async () => {
+  const formulas = [
+    { formula: 'IN(確認済, "Y")', as: "condition" },
+    { formula: '確認済 = "Y"', as: "condition" },
+    { formula: "確認済" },
+    { formula: "ARRAY_COUNT(確認済)" },
+    { formula: "LENGTH(確認済)" },
+  ];
+  const empty = await tryFormulas({ app: 1001, data: { 確認済: [] }, formulas }, opt);
+  assert.equal(empty.status, "ok", JSON.stringify(empty.findings));
+  assert.deepEqual(empty.results.map((r) => r.value), [false, false, "", 0, 0]);
+
+  const single = await tryFormulas({ app: 1001, data: { 確認済: ["Y"] }, formulas }, opt);
+  assert.deepEqual(single.results.map((r) => r.value), [true, true, "Y", 1, 1]);
+
+  // 複数選択: IN は真のまま、= は偽になる。素で読むとカンマ連結、LENGTH は文字数
+  const multi = await tryFormulas({ app: 1001, data: { 確認済: ["A", "Y"] }, formulas }, opt);
+  assert.deepEqual(multi.results.map((r) => r.value), [true, false, "A,Y", 2, 3]);
+  // カンマ連結の文字列はパラメーターに渡せる（SQL 側で SET すると配列に戻る）
+  assert.equal(multi.results[2].param, "A,Y");
+});
+
+test("kact_try: 選択肢に無い値は invalid（名指し。打ち間違いを拾う）", { skip }, async () => {
+  const r = await tryFormulas({ app: 1001, data: { 確認済: ["Y", "Z"] }, formulas: [{ formula: '"a"' }] }, opt);
+  assert.equal(r.status, "invalid");
+  assert.ok(r.findings.some((f) => /選択肢に無い値 "Z"/.test(f.message)), JSON.stringify(r.findings));
+  // 選択肢にある値だけなら通る。空（未選択）も通る
+  assert.equal((await tryFormulas({ app: 1001, data: { 確認済: ["Y"] }, formulas: [{ formula: '"a"' }] }, opt)).status, "ok");
+  assert.equal((await tryFormulas({ app: 1001, data: { 確認済: [] }, formulas: [{ formula: '"a"' }] }, opt)).status, "ok");
+});
+
+test("kact_try: 選択肢の無い型（文字列・数値）は値を見ない", { skip }, async () => {
+  const r = await tryFormulas({ app: 1001, data: { 担当: "だれでもよい", 金額: 123 }, formulas: [{ formula: "担当" }] }, opt);
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
 });
 
 test("kact_try: 項目定義に無い項目を data に書いたら invalid（名指し）", { skip }, async () => {

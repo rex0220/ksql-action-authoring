@@ -109,12 +109,39 @@ function cellValue(v: unknown): unknown {
   return v;
 }
 
+/** 選択肢を持つ型（`options` のキーが選べる値） */
+const OPTION_TYPES = new Set(["CHECK_BOX", "MULTI_SELECT", "DROP_DOWN", "RADIO_BUTTON"]);
+/** 選択肢を**複数**選べる型（値は配列） */
+const MULTI_OPTION_TYPES = new Set(["CHECK_BOX", "MULTI_SELECT"]);
+
+/**
+ * 選択肢に無い値を名指しする（打ち間違いを拾う。計算式 MCP の `fml_try` と同じ考え）。
+ * 項目定義の控えに `options` が無ければ見ない（取り直す前の控え）
+ */
+function optionProblems(where: string, prop: { type?: string; options?: unknown }, value: unknown): string[] {
+  const type = String(prop.type ?? "");
+  if (!OPTION_TYPES.has(type)) return [];
+  const options = prop.options;
+  if (!options || typeof options !== "object") return [];
+  const allowed = Object.keys(options as Record<string, unknown>);
+  if (!allowed.length) return [];
+  const shown = allowed.join(" / ");
+  const values = MULTI_OPTION_TYPES.has(type) ? (Array.isArray(value) ? value : [value]) : [value];
+  const out: string[] = [];
+  for (const v of values) {
+    // 空は「未選択」なので通す（チェックボックスの [] と、ドロップダウンの "" ）
+    if (v === "" || v === null || v === undefined) continue;
+    if (!allowed.includes(String(v))) out.push(`${where}: 選択肢に無い値 "${String(v)}"（${shown}）`);
+  }
+  return out;
+}
+
 /**
  * 架空の値を検証用レコードに差し込む（`crec` の写しを作る）。
- * 項目定義にない項目コードは invalid（名指し）。テーブルは行の配列で渡す
+ * 項目定義にない項目コードと、選択肢に無い値は invalid（名指し）。テーブルは行の配列で渡す
  */
 function applyData(
-  pp: Record<string, { type?: string; fields?: Record<string, unknown> }>,
+  pp: Record<string, { type?: string; options?: unknown; fields?: Record<string, unknown> }>,
   crec: Record<string, unknown>,
   data: Record<string, unknown>,
 ): { record: Record<string, unknown>; problems: string[] } {
@@ -135,7 +162,7 @@ function applyData(
         problems.push(`data.${code}: テーブルの行は ${MAX_TABLE_ROWS} 行まで`);
         continue;
       }
-      const children = (prop.fields ?? {}) as Record<string, { type?: string }>;
+      const children = (prop.fields ?? {}) as Record<string, { type?: string; options?: unknown }>;
       const rows: Array<{ value: Record<string, Cell> }> = [];
       for (const [i, row] of raw.entries()) {
         const cells: Record<string, Cell> = {};
@@ -145,6 +172,7 @@ function applyData(
             problems.push(`data.${code}[${i}].${childCode}: そのテーブルの子に無い`);
             continue;
           }
+          problems.push(...optionProblems(`data.${code}[${i}].${childCode}`, children[childCode]!, childValue));
           cells[childCode] = { type: children[childCode]!.type, value: cellValue(childValue) };
         }
         rows.push({ value: cells });
@@ -152,6 +180,7 @@ function applyData(
       record[code] = { type: "SUBTABLE", value: rows };
       continue;
     }
+    problems.push(...optionProblems(`data.${code}`, prop, raw));
     record[code] = { type: prop.type, value: cellValue(raw) };
   }
   return { record, problems };
