@@ -4,7 +4,9 @@
   "description": "kSQL アクションプラグイン（rex0220 kSQL Action）の設定を AI が作るためのツールと MCP（kact_）",
   "license": "MIT",
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "node scripts/build.mjs",
     "check": "tsc --noEmit -p tsconfig.json",

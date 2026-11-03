@@ -73,9 +73,9 @@ claude plugin validate . && claude plugin test .   # プラグインの形と、
 
 ## 手で確かめること
 
-リリースの候補で、Claude Code（`claude --plugin-dir dist-plugin/<zip>` か marketplace）と Desktop（`.mcpb`）の両方で: `kact_status` が ok、試験用アプリの `kact_fields` → `kact_save_config` → `kact_check` → `kact_explain` の流れ、既存の設定の `kact_pull` → `kact_actions` → `kact_update_action` → `kact_diff`、保存した設定が設定画面で取り込めること、ボタンを押して動くこと、ログ（Desktop の `main.log`、Claude Code の標準エラー）に秘密の値・SQL 本文・レコードの値が無いこと。
+リリースの候補で、Claude Code（`claude --plugin-dir dist-plugin/<zip>` か marketplace）と Desktop（`.mcpb`）の両方で: `kact_status` が ok、試験用アプリの `kact_fields` → `kact_save_config` → `kact_check` → `kact_explain` の流れ、`kact_views`（「(すべて)」が末尾に出る）と `kact_try`（条件の真偽と注入される文字列）、既存の設定の `kact_pull` → `kact_actions` → `kact_update_action` → `kact_diff`、保存した設定が設定画面で取り込めること、ボタンを押して動くこと、ログ（Desktop の `main.log`、Claude Code の標準エラー）に秘密の値・SQL 本文・レコードの値が無いこと。
 
-## ツール（14 本）
+## ツール（16 本）
 
 | ツール | すること | 書き込み |
 |---|---|---|
