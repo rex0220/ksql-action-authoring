@@ -33,6 +33,8 @@ export const MANIFEST_TOOLS = [
   ["kact_actions", "設定のアクションの一覧（SQL 本文は返さない）"],
   ["kact_files", "作業フォルダーの設定ファイルの一覧と digest"],
   ["kact_fields", "kintone の項目定義を取る（GET だけ。控えを置く）"],
+  ["kact_try", "式の試し計算（架空の値で評価。値・条件の真偽・注入される文字列）"],
+  ["kact_views", "kintone の一覧（ビュー）の ID・名前・種類（GET だけ）"],
   ["kact_apps", "kintone のアプリの一覧（GET だけ）"],
   ["kact_save_config", "新しい設定を検査して保存（上書きしない）"],
   ["kact_update_action", "既存の設定のアクションを差し替える・足す"],
