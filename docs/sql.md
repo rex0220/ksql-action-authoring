@@ -143,7 +143,9 @@ UPDATE LAPP_集計 SET 件数 = …, 売上 = … WHERE 顧客コード = @cust
 - **`ORDER BY` に集計式そのものは書けません。** `SUM(金額) AS 売上` と別名を付けて `ORDER BY 売上` と書く
   （集計式を直接書くと parse エラー `KSQL1202`）。
 - `GROUP BY` でキーをまとめると、**集計元が 0 件のときに 1 行も出ません**（集計先が古い値のまま残る）。`patterns` の形にする。
-- 空配列の `NOT IN` は**全件**になります。「選択が空なら何もしない」は `IN @_selected` 側で書く。
+- **`NOT IN` は、中身が値のリスト（`確定 NOT IN ('確定')`）や配列（`NOT IN @keys`）なら書けます。**
+  kintone の `not in` にそのまま乗るので、書き込む文の `WHERE` でも使えます。ただし**空配列の `NOT IN` は全件**に当たります
+  （「選択が空なら何もしない」は `IN @_selected` 側で書く）。書けないのは次の**サブクエリの形だけ**です。
 - **`NOT IN (SELECT …)` は、書き込む文（`UPDATE` / `DELETE`）の `WHERE` に書けません。** 検査は通りますが、
   実行計画で `WHERE predicate cannot be represented by kintone REST (… reason=WHERE_RESIDUAL)` と出て止まります
   （一時テーブル相手でも `temp table references in DELETE are not supported yet`）。
