@@ -58,7 +58,7 @@ DECLARE @_selected = [];     -- 配列（「まとめて 1 回」「グループ
 `@NOW()` / `@TODAY()` は**起動 1 回につき 1 回だけ**決まり、一覧の全レコード・検証・実行で同じ値を使います。
 基準のタイムゾーンは共通設定の `timezone`。`APPEND … SELECT` のソースでも使えます。
 
-## ガードと冪等
+## ガードと「何度流しても同じ結果」
 
 **形**（メッセージは `,`（コンマ）で続けます。**`MESSAGE` という語はありません**）:
 
@@ -86,7 +86,9 @@ EXIT SUCCESS IF (SELECT COUNT(*) FROM LAPP_受注 WHERE 処理状況 <> '済') =
   押す前に止まって理由も出せるので、こちらのほうが利用者には親切です（`formula` の章）。
 - **`ASSERT` のメッセージは画面に出ます**（この製品で文を画面に出す唯一の例外）。
   だから**メッセージに業務データの値を書かない**（「対象がありません」のような固定の文にする）。
-- 何度流しても同じ結果になる形（`UPSERT`、`DELETE` → `INSERT … SELECT`）で書く。`patterns` の 4 文がその形です。
+- 何度流しても同じ結果になる形で書く（`patterns` の 4 文がその形です）。強い順に
+  **① 0 の行を `UNION ALL` で足して集計し `UPSERT`**（消す文も 0 にする文も無いので、途中で失敗しても壊れない）、
+  **② `UPSERT … ON DUPLICATE`**、**③ `DELETE` → `INSERT … SELECT` の全置換**（消したあとで失敗すると空のまま残る）。
 
 ## イベント起動に置く SQL（必ず守る）
 
@@ -96,8 +98,9 @@ EXIT SUCCESS IF (SELECT COUNT(*) FROM LAPP_受注 WHERE 処理状況 <> '済') =
 
 | 書き方 | 可否 |
 |---|---|
+| 0 の行を `UNION ALL` で足して集計し `UPSERT` | ◎ 消す文も 0 にする文も無いので、途中で失敗しても壊れない（`patterns` の「全体再計算」） |
 | `UPSERT … SELECT … ON DUPLICATE (キー)` | ○ キーの行を計算し直して上書きする |
-| `DELETE` → `INSERT … SELECT`（全置換） | ○ |
+| `DELETE` → `INSERT … SELECT`（全置換） | ○ ただし消したあとで失敗すると空のまま残る |
 | `REMOVE ALL ROWS` + `APPEND … SELECT`（テーブル） | ○ |
 | 消さずに足すだけの `INSERT` / `INSERT … SELECT` | **×** 保存のたびに増える |
 | `SET 売上 = 売上 + 1` のような自分自身の足し引き | **×** 差分の反映になる |
@@ -139,6 +142,16 @@ UPDATE LAPP_集計 SET 件数 = …, 売上 = … WHERE 顧客コード = @cust
   （集計式を直接書くと parse エラー `KSQL1202`）。
 - `GROUP BY` でキーをまとめると、**集計元が 0 件のときに 1 行も出ません**（集計先が古い値のまま残る）。`patterns` の形にする。
 - 空配列の `NOT IN` は**全件**になります。「選択が空なら何もしない」は `IN @_selected` 側で書く。
+- **`NOT IN (SELECT …)` は、書き込む文（`UPDATE` / `DELETE`）の `WHERE` に書けません。** 検査は通りますが、
+  実行計画で `WHERE predicate cannot be represented by kintone REST (… reason=WHERE_RESIDUAL)` と出て止まります
+  （一時テーブル相手でも `temp table references in DELETE are not supported yet`）。
+  「もう対象でない行を消す」は、**0 の行を足して集計し、`件数 = 0` で消す**形にします（`patterns` の「全体再計算」）。
+  読み取りの `SELECT`（`CREATE TEMP TABLE … AS SELECT` のソース）には書けますが、**JavaScript 側の判定**になり、
+  その取得が `EXACT` から `PREFILTERED` に落ちます（相手のアプリをもう 1 回読む）。
+- **`WHERE` に関数を書くと実行時に落ちます**（`DmlConvertError`）。`DELETE … WHERE 請求キー = CONCAT(@cust, '-', @m)` は不可で、
+  キーは**計算式で組んでパラメーターで渡します**（`WHERE 請求キー = @key`）。**`SELECT` の列に書く `CONCAT()` は問題ありません。**
+- **`FROM (SELECT … UNION ALL …)` の入れ子（導出表）は書けません。** `UNION ALL` は `CREATE TEMP TABLE` に受けます。
+- **`GROUP BY` は `UNION ALL` の前の枝にだけ掛かります。** 枝ごとに集計したいときは、それぞれの枝に書きます。
 - 別アプリは**自アプリと同じ領域**（通常領域どうし・同じゲストスペースどうし）だけ。
 
 ## 実行計画（`kact_explain`）
@@ -147,8 +160,12 @@ UPDATE LAPP_集計 SET 件数 = …, 売上 = … WHERE 顧客コード = @cust
 使う項目・API の見積もり）。`kact_check` が見るのは**形と規則**なので、次のような「規則としては正しいが意図と違う」ものは計画で気づきます。
 
 - `WHERE` が kintone の条件にならず**全件取得**になっている（`kintone query: (全件取得)`）
+- 書き込む文の `WHERE` に kintone へ渡せない条件が残っていて**止まる**（`reason=WHERE_RESIDUAL`。`NOT IN (SELECT …)` など）
 - 読む件数の見積もりが大きい（`estimated API consumption` の `read`）
 - 文の順番が思っていたのと違う（集計してから更新のつもりが、更新してから集計になっている）
+
+**書き込む SQL は、アクションごとに見てください。** 1 本だけ見て通ったつもりになると、もう 1 本の同じ誤り
+（`WHERE` の関数など）を見落とします。
 
 **kintone には行きません**（`kact_fields` で控えた項目定義だけを使い、レコードは読みません）。控えの無いアプリがあると
 その番号を知らせるので、`kact_fields` で取ってからもう一度見てください。
