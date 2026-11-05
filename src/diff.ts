@@ -11,7 +11,7 @@ type Obj = Record<string, unknown>;
 
 const ENVELOPE_KEYS = ["appId", "appName", "PluginVersion"];
 /** アクションの、そのまま比べる値 */
-const ACTION_SCALARS = ["enabled", "name", "description", "type", "onList", "panelSection", "confirm", "writeLimit", "refreshPrompt", "selectionMode", "listOnError", "perRecordLock", "prevRecord", "allowAll"];
+const ACTION_SCALARS = ["enabled", "name", "description", "type", "onList", "panelSection", "confirm", "writeLimit", "refreshPrompt", "selectionMode", "listOnError", "perRecordLock", "prevRecord", "allowAll", "loop", "loopOnError"];
 /** アクションの、行の差分で見る文（SQL と計算式） */
 const ACTION_TEXTS = ["sql", "showCond", "execCond", "execNgMessage", "resultMessage", "groupFormula"];
 /** アクションの、まとめて比べる配列 */

@@ -359,6 +359,10 @@ export interface ActionSummary {
   panelSection: string;
   /** 一覧の選択の渡し方（「一覧でも使う」のときだけ意味がある） */
   selectionMode?: string;
+  /** ループの式（空 = ループなし。§5.7。本文は短いのでそのまま返す） */
+  loop?: string;
+  /** ループの回が失敗したとき（`stop` / `continue`。ループありのときだけ） */
+  loopOnError?: string;
   confirm: boolean;
   writeLimit: number;
   /** SQL の行数と、使っている文の種類（本文は返さない） */
@@ -490,6 +494,8 @@ export async function listActions(text: string, opt: LoadEngineOptions = {}): Pr
       panelSection: String(a.panelSection ?? ""),
       // 渡し方は「一覧でも使う」のときだけ効く（2026-10-31 に種類 list をやめた）
       ...(a.onList === true ? { selectionMode: String(a.selectionMode ?? "loop") } : {}),
+      // ループ（§5.7）。使っているアクションだけ返す（空なら従来どおり 1 回）
+      ...(String(a.loop ?? "").trim() ? { loop: String(a.loop), loopOnError: String(a.loopOnError ?? "stop") } : {}),
       confirm: !!a.confirm,
       writeLimit: Number(a.writeLimit ?? 0),
       sqlLines: String(a.sql ?? "").split("\n").length,

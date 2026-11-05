@@ -94,7 +94,7 @@ claude plugin validate . && claude plugin test .   # プラグインの形と、
 | `kact_fields` | kintone の項目定義を**読み取り（GET）だけ**で取り、控えて要約（コード・型・ラベル・重複禁止・テーブルの子・**SQL で書ける項目か**）を返す。取った後は計算式を**項目コードまで検査**する | kintone（GET）＋ 作業フォルダー |
 | `kact_apps` | アプリの一覧（`name` で名前を絞れる。続きはツールが読んで集める。**ログイン名とパスワードの接続のときだけ**） | kintone（GET） |
 | `kact_views` | 一覧（ビュー）の ID・名前・種類（`panel.views` に一覧ごとの行を書くとき。「(すべて)」は API に返らないのでツールが足す） | kintone（GET） |
-| `kact_try` | 式の**試し計算**（架空の値で評価。値・表示条件の真偽・SQL に注入される文字列）。**プラグイン本体の実行時と同じコード**で評価する（authoring API 版 4 以降の zip） | なし |
+| `kact_try` | 式の**試し計算**（架空の値で評価。値・表示条件の真偽・SQL に注入される文字列）。**プラグイン本体の実行時と同じコード**で評価する（authoring API 版 4 以降の zip）。ループのアクションは `loop` に 1 回ぶんを渡すと `$val` / `$lno` が使える | なし |
 
 **kintone には何も書きません。** 書くのは作業フォルダーの中だけで、取り込みと実行は利用者が設定画面で行います。
 kintone に送るのは `kact_fields` / `kact_apps` / `kact_views` の **GET** だけで、送れるパスは固定しています（`src/kintone-rest.ts` の `ALLOWED_APIS`。レコードは読みません）。

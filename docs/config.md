@@ -70,6 +70,8 @@
   "listOnError": "continue",
   "selectionMode": "loop",
   "groupFormula": "",
+  "loop": "",
+  "loopOnError": "stop",
   "perRecordLock": false,
   "prevRecord": false
 }
@@ -99,6 +101,8 @@
 | `listOnError` | `"continue"` / `"stop"` | 一覧の 1 件ずつのときだけ効く |
 | `selectionMode` | `"loop"` / `"once"` / `"group"` | 一覧で選んだレコードの渡し方（`selection`）。**`onList: true` のときだけ効く** |
 | `groupFormula` | 計算式 | `selectionMode: "group"` の**分ける式** |
+| `loop` | 計算式 | **同じ SQL を回数ぶん流す**（空 = ループなし = 1 回）。非負の整数 `N` なら `N` 回、配列ならその要素（`loop`）。**使うなら `writeLimit` が必須** |
+| `loopOnError` | `"stop"` / `"continue"` | ループの回が失敗したとき。既定は `"stop"`（残りの回を流さない） |
 | `perRecordLock` | 真偽 | ログアプリ指定時のみ。ロックキーにレコード ID を足す |
 | `prevRecord` | 真偽 | 起動に `event_edit` があるときだけ。集計先が変わったときに**前の集計先も**直す |
 

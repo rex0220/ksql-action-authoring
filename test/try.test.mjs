@@ -104,6 +104,34 @@ test("kact_try: result を渡すと _result_* が使える", { skip }, async () 
   assert.equal(one(r).value, "updated=4");
 });
 
+test("kact_try: loop を渡すと $val / $lno が使える（型はそのまま）", { skip }, async () => {
+  const r = await tryFormulas({ loop: { val: 2017, lno: 0 }, formulas: [{ formula: "2017 + $val", as: "param" }, { formula: "$lno" }] }, opt);
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  assert.deepEqual(r.loop, { val: 2017, lno: 0 });
+  // 数で渡したので足し算になる（文字列で渡すと連結。実行時の withLoopRecord と同じ）
+  assert.equal(r.results[0].param, "4034");
+  // $lno は数のまま返る（型が分かるように valueType も見る）
+  assert.equal(r.results[1].value, 0);
+  assert.equal(r.results[1].valueType, "number");
+});
+
+test("kact_try: loop の値は文字列でもよい（連結になる）", { skip }, async () => {
+  const r = await tryFormulas({ loop: { val: "2026-09", lno: 2 }, formulas: [{ formula: '"月=" & $val & "/" & $lno', as: "param" }] }, opt);
+  assert.equal(r.results[0].param, "月=2026-09/2");
+});
+
+test("kact_try: loop を渡さなければ $val は無い項目", { skip }, async () => {
+  const r = await tryFormulas({ formulas: [{ formula: "$val" }] }, opt);
+  assert.equal(r.loop, undefined);
+  assert.equal(r.results[0].ok, false);
+});
+
+test("kact_try: loop.val に配列や真偽値は渡せない", { skip }, async () => {
+  const r = await tryFormulas({ loop: { val: [1, 2] }, formulas: [{ formula: "$val" }] }, opt);
+  assert.equal(r.status, "invalid");
+  assert.ok(r.findings.some((f) => /loop\.val/.test(f.message)), JSON.stringify(r.findings));
+});
+
 test("kact_try: 項目の無い文脈では項目参照が誤りになる（種類 app と同じ）", { skip }, async () => {
   const r = await tryFormulas({ formulas: [{ formula: 'LOGIN_INFO("code")' }, { formula: "担当" }], user: { code: "demo_user01" } }, opt);
   assert.equal(r.status, "ok", JSON.stringify(r.findings));

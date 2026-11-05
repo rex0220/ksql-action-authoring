@@ -280,12 +280,20 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
         "返りの value は値、**condition は表示条件・実行条件として見たときの真偽**（\"0\" / \"false\" / 空は偽）、**param は SQL に注入される文字列**。" +
         "評価はプラグイン本体の実行時と同じコード（authoring API 版 4 以降の zip が要る）。kintone には行かない（項目定義は kact_fields の控え）。" +
         "資料にある関数の使い方をなぞるだけなら呼ばない。**動きの確認を求められたとき・資料に無い端の値（空・0・未選択）を断言するとき**に、10 式までまとめて 1 回。" +
-        "**値は架空のもの**を渡す（実在の個人情報・本番の値は入れない）。",
+        "**値は架空のもの**を渡す（実在の個人情報・本番の値は入れない）。" +
+        "ループ（loop）のアクションのパラメーターの式を試すときは loop に 1 回ぶん（{ val, lno }）を渡す（$val / $lno が使えるようになる）。",
       inputSchema: {
         app: z.number().int().positive().optional().describe("自アプリの番号（kact_fields の控えを使う）。省略すると項目の無い文脈（種類 app と同じ）"),
         context: z.enum(["record", "none"]).optional().describe("レコード文脈。省略は app があれば record。none は種類 app・「まとめて 1 回」・「グループごと」と同じ（項目を参照すると誤りになる）"),
         data: z.record(z.unknown()).optional().describe("架空の値（項目コード → 値。チェックボックス・複数選択は配列、テーブルは行の配列 [{ 子のコード: 値 }]）。書かない項目は空。**選択肢に無い値は invalid で名指し**。実在の個人情報を入れない"),
         result: z.record(z.union([z.string(), z.number()])).optional().describe("結果メッセージを試すときの _result_* の値（例 { _result_updated: 4, _result_status: \"success\" }）。渡すと _result_* が使える文脈になる"),
+        loop: z
+          .object({ val: z.union([z.string(), z.number()]), lno: z.number().int().min(0).optional() })
+          .optional()
+          .describe(
+            "ループ（loop）の 1 回ぶん。渡すと**パラメーターの式で $val / $lno が使える**文脈になる（例 { val: 2017, lno: 0 }）。" +
+              "**$val は渡した型のまま**（数値なら 2017 + $val は足し算、文字列なら連結）。回の並びは自分で決めて 1 回ぶんずつ試す",
+          ),
         user: z
           .object({ code: z.string().optional(), name: z.string().optional(), id: z.string().optional(), email: z.string().optional() })
           .optional()
@@ -298,7 +306,7 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ app, context, data, result, user, formulas }) =>
+    async ({ app, context, data, result, user, loop, formulas }) =>
       json(
         await tryFormulas(
           {
@@ -307,6 +315,7 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
             ...(data ? { data } : {}),
             ...(result ? { result } : {}),
             ...(user ? { user } : {}),
+            ...(loop ? { loop } : {}),
             formulas,
           },
           zipOptions(),

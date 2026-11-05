@@ -36,6 +36,13 @@ export interface TryInput {
   data?: Record<string, unknown>;
   /** 結果メッセージを試すときの `_result_*` の値（これを渡すと `_result_*` が使える文脈になる） */
   result?: Record<string, string | number>;
+  /**
+   * ループの 1 回ぶん（§5.7）。渡すと**パラメーターの式で `$val` / `$lno` が使える**文脈になる。
+   * 足すのは本体の `withResultRecord`（実行時の `withLoopRecord` と同じ口）なので、
+   * **`$val` は渡した値の型のまま**（数値を渡せば `2017 + $val` は足し算、文字列を渡せば連結）。
+   * 回の並び（`3` → 0・1・2、`ARRAY(…)` → その要素）は**利用者 / AI が決めて 1 回ぶんを渡す**
+   */
+  loop?: { val: string | number; lno?: number };
   /** ログインユーザー（`LOGIN_INFO` を使う式のとき） */
   user?: { code?: string; name?: string; id?: string; email?: string };
   formulas: TryFormula[];
@@ -68,6 +75,8 @@ export interface TryResult {
   fieldsFrom?: string;
   /** `_result_*` を足した文脈か */
   withResult?: boolean;
+  /** `$val` / `$lno` を足した文脈か（渡された回の値をそのまま返す） */
+  loop?: { val: string | number; lno: number };
   results?: TryValue[];
   findings: Finding[];
   message?: string;
@@ -248,6 +257,25 @@ export async function tryFormulas(input: TryInput, opt: LoadEngineOptions & { wo
     base = r.record as Record<string, unknown>;
   }
 
+  /**
+   * ループの回（§5.7）。`$val` / `$lno` を足すのも本体の `withResultRecord`（= 実行時の `withLoopRecord`）。
+   * **パラメーターの式だけ**がこの文脈で評価される（ループの式そのもの・表示条件・実行条件・結果メッセージでは使えない）
+   */
+  let loop: { val: string | number; lno: number } | undefined;
+  if (input.loop !== undefined) {
+    const val = input.loop.val;
+    if (typeof val !== "string" && typeof val !== "number") {
+      return fail("input", "loop.val は文字列か数値で渡す（ループ値は SQL に注入できる型だけ）", "invalid");
+    }
+    if (typeof val === "number" && !Number.isFinite(val)) return fail("input", "loop.val が数でない（NaN・Infinity は渡せない）", "invalid");
+    const lno = input.loop.lno ?? 0;
+    if (!Number.isSafeInteger(lno) || lno < 0) return fail("input", "loop.lno は 0 以上の整数で渡す（回の番号は 0 から）", "invalid");
+    loop = { val, lno };
+    const r = evalApi.withResultRecord(pp, base, { $val: val, $lno: lno });
+    pp = r.pp;
+    base = r.record as Record<string, unknown>;
+  }
+
   if (input.user) {
     engine.setContext({ loginUser: { id: "1", code: "", name: "", email: "", language: "ja", ...input.user } });
   }
@@ -280,11 +308,14 @@ export async function tryFormulas(input: TryInput, opt: LoadEngineOptions & { wo
     context,
     ...(fieldsFrom ? { fieldsFrom } : {}),
     ...(withResult ? { withResult: true } : {}),
+    ...(loop ? { loop } : {}),
     results,
     findings,
     message:
       `${results.length} 本を${context === "record" ? "レコード文脈" : "項目の無い文脈（種類 app と同じ）"}で評価した` +
+      `${loop ? `（ループの回 $val=${JSON.stringify(loop.val)} / $lno=${String(loop.lno)}）` : ""}` +
       `${ng ? `（${ng} 本が失敗）` : ""}。**架空の値での模擬**で、利用者のレコードでは値が変わる。` +
-      `condition は表示条件・実行条件として見たときの真偽、param は SQL に注入される文字列`,
+      `condition は表示条件・実行条件として見たときの真偽、param は SQL に注入される文字列` +
+      `${loop ? "。$val / $lno が使えるのは**パラメーターの式だけ**（ほかの口に書くと実行時に「無い項目」で落ちる）" : ""}`,
   };
 }
