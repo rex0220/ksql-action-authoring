@@ -1,6 +1,6 @@
 {
   "name": "ksql-action",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "kintone の kSQL アクションプラグイン（rex0220 kSQL Action）の設定 JSON を、検査と実行計画を通して作業フォルダーに保存・確認する（kact MCP と、設定ファイルへの直接の書き込みを止めるフック）",
   "author": {
     "name": "rex0220"

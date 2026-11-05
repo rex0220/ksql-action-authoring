@@ -124,6 +124,9 @@
 ```json
 {
   "title": "",
+  "sectionColumns": 1,
+  "buttonWidth": 200,
+  "buttonLogLink": false,
   "sections": [{ "enabled": true, "name": "受注", "color": "blue", "tone": "soft", "collapsed": false }],
   "views": [{ "viewId": "*", "sections": ["受注"], "menus": [], "open": false }]
 }
@@ -132,6 +135,9 @@
 | キー | 値 | 備考 |
 |---|---|---|
 | `title` | 文字列 | パネルの帯の名前（空 = プラグイン名） |
+| `sectionColumns` | 1〜6（省略 = 1） | **1 行に並べる区分の数**。1 = 縦に積む（従来）。指定するのは**最大の列数**で、ボタンの幅が入らなくなったら自動で減る。モバイルは常に 1 列 |
+| `buttonWidth` | 120〜400（省略 = 200） | **ボタンの幅**（px。カードの最小幅）。列がこれより広ければボタンは列いっぱいに伸びる。**区分を 4 つ以上横に並べるなら下げる**（下げないとボタンの名前が切れる）。モバイルは常に幅いっぱいで効かない |
+| `buttonLogLink` | 真偽（省略 = `false`） | ボタンにログ一覧へのリンクを出すか。**既定は出さない**。出さなくても、帯と区分の見出しのリンクからログ一覧へ行ける |
 | `sections` | `[{ enabled, name, color, tone, collapsed }]` | **区分の定義**。`name` がキー（アクションの `panelSection` と突き合わせる）。`color` は 8 色 ＋ `""`、`tone` は `"soft"` / `"vivid"`、`collapsed` は既定で畳むか。**無効（`enabled: false`）の区分は定義していないのと同じ** |
 | `views` | `[{ viewId, sections, menus, open }]` | **一覧ごとの出し方**。`viewId` が `"*"` の行は「ほかの一覧すべて」（必ず 1 行目）。`sections` = パネルに出す区分、`menus` = メニューに出す区分（メニュー名は区分名。区分なしはボタンを直接並べる）、`open` = パネルを開いて出すか |
 
@@ -155,6 +161,14 @@
 ```
 
 区分の名前を変えるときは、アクションの `panelSection` も一緒に変えます。
+
+**区分を横に並べるときの目安**（`sectionColumns` と `buttonWidth` の組み合わせ）:
+
+| 区分を横に | ボタンの幅 |
+|---|---|
+| 1（既定） | 200 のまま |
+| 2〜3 | 200 のままで足りる |
+| 4 以上 | **140〜160 に下げる**（1360px の画面で 6 列にすると、区分 1 つは 200px ほどしか残らない） |
 
 **イベント起動の決まり**: 確認なし（`confirm: false`）＋ `writeLimit` 必須 ＋ `inputs` なし ＋ `showCond` は効かない。
 イベントは**ブラウザーの操作だけ**で動きます（REST API・CSV 読み込みでは動かない）。
