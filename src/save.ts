@@ -75,6 +75,12 @@ function inputWithDefaults(input: unknown): Record<string, unknown> {
   if (!isObject(input)) return {};
   // 見出しが無ければ名前をそのまま出す（画面に出る文字なので空にしない）
   const label = typeof input.name === "string" ? input.name : "";
+  /**
+   * **2026-11-05 に本体へ足したキー（`optionsFormula` / `optionLabelsFormula` / 範囲）は埋めない。**
+   * どれもスキーマで optional（本体の `migrateConfig` が空を入れる）なので補う必要が無く、
+   * ここで埋めると**古い zip が `unknown key` で断る**（このリポジトリは古い版の zip も動かす決まり）。
+   * 範囲はそもそも「キーが無い = 制限なし」なので、`0` を入れると「下限 0」という別の意味になる
+   */
   return { label, type: "text", required: false, defaultFormula: "", options: [], ...input };
 }
 

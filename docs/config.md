@@ -89,7 +89,7 @@
 | `showCond` | 計算式 | 偽ならボタンを出さない（イベント起動には効かない） |
 | `execCond` / `execNgMessage` | 計算式 | 偽なら実行せずメッセージ |
 | `params` | `[{ name, source, formula }]` | SQL の `DECLARE` と**過不足なく 1 対 1**（下の「パラメーターと入力項目」） |
-| `inputs` | `[{ name, label, type, required, defaultFormula, options }]` | 実行時に聞く値。`type` は `text` / `number` / `date` / `datetime` / `select` / `relative_date`。**イベント起動には持てない** |
+| `inputs` | `[{ name, label, type, required, defaultFormula, options, optionsFormula, optionLabelsFormula, minValue, maxValue, minLength, maxLength }]` | 実行時に聞く値。`type` は `text` / `number` / `date` / `datetime` / `select` / `relative_date`。**イベント起動には持てない**（下の「パラメーターと入力項目」） |
 | `sql` | Flow dialect 1 | 1 本 20,000 字・20 文まで（`sql`） |
 | `staticInsertRows` | 整数 | 素の `INSERT … VALUES` の行数。**保存のときにプラグインが数え直して上書きする**ので、AI は書かなくてよい |
 | `confirm` | 真偽 | 既定 `true`（件数の確認）。`false` にすると `writeLimit` が**必須** |
@@ -197,6 +197,51 @@ SQL の `DECLARE` 1 本につき **`params` の行が 1 つ**要ります（予�
 - `options` を書くのは `type` が **`select`** か **`relative_date`** のときだけです。どちらも**選択肢**として出るので、
   空のままだと利用者は何も選べません（`relative_date` では、許す日付関数のトークンを並べます）。
 - `type: "relative_date"` の入力項目と対になる `DECLARE` は、`RELATIVE_DATE` 注釈つきで書きます（`sql`）。
+
+### 選択肢を計算式で出す（`optionsFormula` / `optionLabelsFormula`）
+
+`type: "select"` のとき、候補を**計算式**で出せます。**`optionsFormula` が空でなければ `options` は使いません。**
+
+| キー | 中身 |
+|---|---|
+| `optionsFormula` | 選択肢の**値**（SQL に注入されるほう）。配列、または 1 つの文字列・数値を返す式 |
+| `optionLabelsFormula` | 選択肢の**ラベル**（画面に出るだけ）。**値と同じ数・同じ順**で返す式。空なら値をそのまま出す。**これだけ書いて `optionsFormula` が空だと保存できません**（ラベルが黙って無視されるため） |
+
+```jsonc
+// 前月・当月・翌月から請求月（YYYY-MM）を選ばせる
+{ "name": "month", "label": "請求月", "type": "select", "required": true,
+  "optionsFormula": "ARRAY(DATE_ADD(\"TODAY\", -1, \"month\", \"YYYY-MM\"), DATE_FORMAT(\"TODAY\", \"YYYY-MM\"), DATE_ADD(\"TODAY\", 1, \"month\", \"YYYY-MM\"))" }
+
+// 担当者を「表示名で選ばせて、ログイン名を注入する」
+{ "name": "user", "label": "担当者", "type": "select",
+  "optionsFormula": "SEL_CODE(担当者, \"array\")",
+  "optionLabelsFormula": "SEL_NAME(担当者, \"array\")" }
+```
+
+- 空の値と重複は落とします（`toParamValue` を通した文字列で見ます）。**落とすときはラベルも同じ添字で落ちます。**
+- ラベルの数が値の数と違う、候補が 1 つも残らない、配列でも 1 つの値でもない、
+  要素やラベルが文字列・数値でない（`null` / 真偽 / 入れ子の配列）→ **実行前エラー**（実行しません）。
+- **`type` が `select` のときだけ**効きます。ほかの型に残っていても無視され、検査もしません。
+- 上限は 100 件（固定の `options` と同じ）。
+- **`relative_date` には書けません**（許す日付関数のトークンを保存時に確かめるため、`options` で並べます）。
+
+#### レコードの項目を使えるのは詳細画面のボタンだけ
+
+入力は**起動 1 回につき 1 回**しか聞かないので、一覧からの実行では式を当てるレコードが決まりません。
+`defaultFormula` / `optionsFormula` / `optionLabelsFormula` でレコードの項目を使えるのは
+**`type: "record"` かつ `onList: false`** のアクションだけで、そうでないのに項目を書くと**保存できません**。
+日付計算（`TODAY` / `DATE_ADD` / `DATE_FORMAT`）やログイン情報は、どの起動でも使えます。
+
+### 入力できる値を絞る（`minValue` / `maxValue` / `minLength` / `maxLength`）
+
+**キーを書かなければ制限なし**です（`0` は「制限なし」ではなく「下限 0」の意味になります）。
+
+| 型 | キー | 中身 |
+|---|---|---|
+| `number` | `minValue` / `maxValue` | **値**の範囲 |
+| `text` | `minLength` / `maxLength` | **文字数**（0 以上の整数。絵文字も 1 文字として数えます） |
+
+最小が最大より大きい設定は保存できません。数値の欄に数でない文字が入っているときも実行できません。
 
 ### キーの配列（`source: "keys"`）
 

@@ -138,8 +138,8 @@ export interface CheckResult {
 }
 
 /** 計算式の口（設定画面の `collectFormulaProblems` と同じ。`where` は利用者に出す名前） */
-function formulaSlots(action: Record<string, unknown>): Array<{ where: string; raw: string }> {
-  const slots: Array<{ where: string; raw: string }> = [
+function formulaSlots(action: Record<string, unknown>): Array<{ where: string; raw: string; input?: true }> {
+  const slots: Array<{ where: string; raw: string; input?: true }> = [
     { where: "showCond（表示条件）", raw: String(action.showCond ?? "") },
     { where: "execCond（実行条件）", raw: String(action.execCond ?? "") },
     { where: "execNgMessage（実行条件 NG のメッセージ）", raw: String(action.execNgMessage ?? "") },
@@ -149,8 +149,18 @@ function formulaSlots(action: Record<string, unknown>): Array<{ where: string; r
   for (const p of (Array.isArray(action.params) ? action.params : []) as Array<Record<string, unknown>>) {
     if (p.source === "formula") slots.push({ where: `params ${String(p.name ?? "")} の式`, raw: String(p.formula ?? "") });
   }
+  /**
+   * 入力の式には `input: true` を付ける。**レコード文脈の規則がほかと違う**ので、
+   * `checkFormulas` が文脈を選ぶときに要る（本体の `inputUsesRecord`。2026-11-05 の Codex レビュー MAJOR 5）
+   */
   for (const i of (Array.isArray(action.inputs) ? action.inputs : []) as Array<Record<string, unknown>>) {
-    slots.push({ where: `inputs ${String(i.name ?? "")} の既定値`, raw: String(i.defaultFormula ?? "") });
+    const at = `inputs ${String(i.name ?? "")}`;
+    slots.push({ where: `${at} の既定値`, raw: String(i.defaultFormula ?? ""), input: true });
+    // 選択肢の値とラベルの式（2026-11-05 に本体へ足した。型が選択肢のときだけ効く）
+    if (i.type === "select") {
+      slots.push({ where: `${at} の選択肢の値`, raw: String(i.optionsFormula ?? ""), input: true });
+      slots.push({ where: `${at} の選択肢のラベル`, raw: String(i.optionLabelsFormula ?? ""), input: true });
+    }
   }
   return slots.filter((s) => s.raw.trim() !== "");
 }
@@ -207,6 +217,13 @@ function checkFormulas(engine: Engine, actions: Array<Record<string, unknown>>, 
     // 設定画面の baseKey と同じ: アプリ種別と「まとめて 1 回 / グループごと」はレコード文脈が無い
     const noRecord = action.type === "app" || engine.api.isSelectionNoRecord(action as never);
     const base: "record" | "none" = noRecord ? "none" : "record";
+    /**
+     * **入力の式（既定値・選択肢）だけは規則が違う**（本体の `inputUsesRecord`。2026-11-05）。
+     * 入力は起動 1 回につき 1 回しか聞かないので、一覧からの起動は「1 件ずつ」でもレコードが無い。
+     * ここを `base` のままにすると、一覧の「1 件ずつ」でレコードの項目を使った式を
+     * tools が通してしまい、**設定画面の保存で初めて止まる**（利用者には理由が分からない）
+     */
+    const inputBase: "record" | "none" = action.type === "record" && action.onList !== true ? "record" : "none";
     for (const slot of formulaSlots(action)) {
       const context = !contexts
         ? emptyContext
@@ -214,7 +231,7 @@ function checkFormulas(engine: Engine, actions: Array<Record<string, unknown>>, 
           ? contexts.result(base)
           : slot.where.startsWith("groupFormula")
             ? contexts.record // 分ける式はレコードごとに評価する
-            : contexts[base];
+            : contexts[slot.input ? inputBase : base];
       const r = engine.api.checkFormula(context, slot.raw) as { ok: boolean; msg?: string };
       if (r.ok) continue;
       const unknown = UNKNOWN_NAME_RE.exec(r.msg ?? "");
