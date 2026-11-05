@@ -81,7 +81,7 @@
 |---|---|---|
 | `enabled` | 真偽 | 無効なら起動口を出さずイベントにも反応しない。**無効の行は SQL を検査しない**（下書き） |
 | `code` | `[A-Za-z_][A-Za-z0-9_]*`、32 字まで | 大文字小文字を無視して一意。ロックキーとログに使う。**あとで変えない** |
-| `name` / `description` | 文字列 | ボタン・パネルに出す |
+| `name` / `description` | 文字列 | ボタン・パネルに出す。**`name` は必須**（空では保存できない。100 字まで。2026-11-05 から検査する）。`description` は 500 字まで |
 | `type` | `"record"` / `"app"` | レコード 1 件に実行 / レコードに依らない処理（**2026-10-31 に 3 つから 2 つになった**。旧 `"list"` は `"record"` ＋ `onList: true` に読み替わる） |
 | `onList` | 真偽 | **一覧画面でも使う**（選んだレコードに実行）。`type: "record"` のときだけ |
 | `placements` | 下の表 | 詳細画面の出し場所（複数可）とイベント。**一覧画面の出し方はここでは決めない** |
@@ -89,7 +89,7 @@
 | `showCond` | 計算式 | 偽ならボタンを出さない（イベント起動には効かない） |
 | `execCond` / `execNgMessage` | 計算式 | 偽なら実行せずメッセージ |
 | `params` | `[{ name, source, formula }]` | SQL の `DECLARE` と**過不足なく 1 対 1**（下の「パラメーターと入力項目」） |
-| `inputs` | `[{ name, label, type, required, defaultFormula, options, optionsFormula, optionLabelsFormula, minValue, maxValue, minLength, maxLength }]` | 実行時に聞く値。`type` は `text` / `number` / `date` / `datetime` / `select` / `relative_date`。**イベント起動には持てない**（下の「パラメーターと入力項目」） |
+| `inputs` | `[{ name, label, type, required, defaultFormula, options, optionsFormula, optionLabelsFormula, minValue, maxValue, minLength, maxLength }]` | 実行時に聞く値。`type` は `text` / `number` / `date` / `datetime` / `select` / `relative_date`。**イベント起動には持てない**（`enabled: false` にした行は数えないので、無効にすればイベント起動にできる。下の「パラメーターと入力項目」） |
 | `sql` | Flow dialect 1 | 1 本 20,000 字・20 文まで（`sql`） |
 | `staticInsertRows` | 整数 | 素の `INSERT … VALUES` の行数。**保存のときにプラグインが数え直して上書きする**ので、AI は書かなくてよい |
 | `confirm` | 真偽 | 既定 `true`（件数の確認）。`false` にすると `writeLimit` が**必須** |
@@ -192,6 +192,12 @@ SQL の `DECLARE` 1 本につき **`params` の行が 1 つ**要ります（予�
 ```
 
 - `source: "input"` の行に `formula` は要りません（空で埋まります）。
+- **`params` と `inputs` の `name` は同じ規則**です（2026-11-05 にプラグイン側で入力項目にも検査が入りました）。
+  半角英字か `_` で始まり、半角英数字と `_` だけ、64 字まで。`_` 始まりは予約です。
+  **大文字小文字を区別せずに重複できません**（実行時は小文字にしてキーにするので、`year` と `YEAR` は同じ 1 つと見ます）。
+- `params` / `inputs` の行には **`enabled`**（真偽。既定 `true`）があります。`false` にすると**その行を一時的に使いません**
+  （パラメーターは注入せず、入力項目は聞きません）。どちらも値が無いので **SQL の `DECLARE` の既定値**が使われます。
+  `DECLARE` との突き合わせは今までどおりなので、**SQL は直さなくてかまいません**。
 - `inputs` の `label` / `type` / `required` / `defaultFormula` / `options` は**書かなければ既定で埋まります**
   （`label` は名前、`type` は `text`、`required` は `false`、`options` は `[]`）。
 - `options` を書くのは `type` が **`select`** か **`relative_date`** のときだけです。どちらも**選択肢**として出るので、
