@@ -394,7 +394,11 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
   for (const f of nowhereShownFindings(config, actions)) findings.push(f);
   for (const [i, action] of actions.entries()) {
     if (action.enabled === false) continue;
-    const r = (await engine.api.checkActionSql(action as never, bindings)) as {
+    /**
+     * 共通の文の表を**必ず渡す**（API 版 7。§8.4）。渡さないと `DECLARE @m_…` と
+     * `ASSERT …, @m_…` が「表に無い」で error になる（本体が黙って通さない向きに倒してある）
+     */
+    const r = (await engine.api.checkActionSql(action as never, bindings, { messages: config.messages })) as {
       problems: Array<{ code: string; detail?: string; index?: number; kind?: string }>;
       warnings: Array<{ code: string; message: string }>;
     };
@@ -712,7 +716,10 @@ export function arrayDeclareNames(sql: string): string[] {
 }
 
 /** 設定の中身を一覧（kact_actions）。**SQL 本文と値は返さない** */
-export async function listActions(text: string, opt: LoadEngineOptions = {}): Promise<{ status: ToolStatus; actions?: ActionSummary[]; findings: Finding[] }> {
+export async function listActions(
+  text: string,
+  opt: LoadEngineOptions = {},
+): Promise<{ status: ToolStatus; actions?: ActionSummary[]; messages?: string[]; findings: Finding[] }> {
   let engine: Engine;
   try {
     engine = await loadEngine(opt);
@@ -726,8 +733,19 @@ export async function listActions(text: string, opt: LoadEngineOptions = {}): Pr
     return { status: "invalid", findings: [{ level: "error", code: "parse-failed", message: e instanceof Error ? e.message : String(e) }] };
   }
   const actions = (Array.isArray(config.actions) ? config.actions : []) as Array<Record<string, unknown>>;
+  /**
+   * 共通の文の**コードの一覧だけ**（§8.4。文は返さない＝コードが分かれば式が書ける）。
+   *
+   * 2026-11-06 の試用 S3 で、**`panel` がツールから読めないために「黙って消える」実害**が出た。
+   * `messages` で同じことを繰り返さないために、最初から返す。
+   * **ツールからは足せない**（設定画面の［メッセージ］で足してもらう）ので、資料にもそう書く
+   */
+  const messages = (Array.isArray(config.messages) ? config.messages : [])
+    .map((msg) => String((msg as { code?: unknown }).code ?? ""))
+    .filter(Boolean);
   return {
     status: "ok",
+    ...(messages.length > 0 ? { messages } : {}),
     actions: actions.map((a, i) => ({
       index: i + 1,
       code: String(a.code ?? ""),

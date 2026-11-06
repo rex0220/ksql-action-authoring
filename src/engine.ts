@@ -266,6 +266,18 @@ async function startEngine(src: PluginSources & { kind: "zip" | "dev"; api: stri
   window.kintone = g.kintone;
   window.cybozu = g.cybozu;
   window.rex0220_users_info3 = g.rex0220_users_info3;
+  /**
+   * 設定の大きさを測る口（API 版 7 の `measureConfigBytes`）は kit の `config-store` を通り、
+   * そこが **`CompressionStream('deflate')`**（ブラウザー標準）を使う。
+   * happy-dom は持っていないが **Node 18 以降のグローバルにはある**ので、窓に通す。
+   * 無いままだと「公開されているのに呼ぶと落ちる口」になる（2026-11-06 に実測）
+   */
+  for (const key of ["CompressionStream", "DecompressionStream"] as const) {
+    const impl = (globalThis as Record<string, unknown>)[key];
+    if (impl !== undefined && (window as unknown as Record<string, unknown>)[key] === undefined) {
+      (window as unknown as Record<string, unknown>)[key] = impl;
+    }
+  }
 
   const runScript = (code: string, filename: string, entry?: string): void => {
     try {

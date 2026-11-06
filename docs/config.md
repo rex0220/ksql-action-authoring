@@ -26,8 +26,74 @@
 | `timezone` | `""` | as-of 関数（`@NOW()` / `@TODAY()`）の基準。空 = アプリの設定に従う |
 | `panel` | `{ title, sections, views }` | **画面ごとの区分と出し方**（一覧のパネル・メニューと詳細画面。下の「パネル・区分（`panel`）」） |
 | `progressStyle` | `"dialog"` / `"spinner"` | イベント実行中の見せ方（既定 `dialog`） |
+| `messages` | `[{ code, text, text_ja?, text_en?, text_zh? }]`（任意） | **共通の文**（下の「共通の文（`messages`）」）。**ツールからは足せません** |
 | `actions` | `[ActionDef]` | アクションの列。**並びがボタンを出す順**（同じイベントの実行順も同じ） |
 | `pluginComment` / `pluginDescription` | 文字列（任意） | 設定する人の覚え書き。利用者の画面には出ない |
+
+## 共通の文（`messages`）と多言語
+
+### 共通の文（`messages`）
+
+画面に出す文を共通設定にまとめて持ち、**同じ文を複数のアクションで使い回す**ための設定です
+（多言語のためだけではありません。1 言語でも「直すのは 1 か所」で役に立ちます）。
+
+```jsonc
+"messages": [
+  { "code": "m_no_amount", "text": "金額が空です", "text_en": "Amount is empty", "text_zh": "金额为空" },
+  { "code": "m_done", "text": "{n} 件を書き込みました", "text_en": "Wrote {n} records" }
+]
+```
+
+**記号は書く場所で決まります。** 表に持つのは**記号なしの名前**です。
+
+| 書く場所 | 形 |
+|---|---|
+| 計算式 | **`$m_done`**（擬似項目。`$id` / `$result_*` と同じ族） |
+| SQL | **`@m_done`**（変数。`DECLARE @m_done = '';` が要る） |
+| 設定の `code` | **`m_done`**（記号なし） |
+
+| 決め | 中身 |
+|---|---|
+| コード | `m_` で始まり、後ろは `[a-z0-9_]`（**小文字だけ**）、64 字まで、一意 |
+| 既定の文（`text`） | **必須**（各言語が空のときに落ちる先） |
+| 使える式の口 | **`execNgMessage` / `resultMessage` / `inputs[].optionLabelsFormula` の 3 つだけ**。ほかの口に `$m_…` を書くと `message:slot` の error |
+| SQL | `ASSERT` と `EXIT SUCCESS IF` のメッセージだけ。`m_` でない変数をメッセージに書くと error（表示は何も出ないため） |
+| 上限 | 50 件 / 1 つの文は 200 字（4 列とも同じ） |
+
+> **【大事】`messages` はツールからは足せません。**
+> `kact_save_config` / `kact_update_action` は `messages` を作らないので、
+> **利用者に設定画面のツールバーの［メッセージ］で足してもらってください**。
+> 今ある文のコードは **`kact_actions` の返りの `messages`** で分かります（文そのものは返りません）。
+> **無いコードを式に書くと `kact_check` が error にします。**
+
+```
+// 計算式の例（件数を埋める）
+REPLACE($m_done, "{n}", $result_total)
+```
+
+```sql
+-- SQL の例（エンジン 3.90.0 以降）
+DECLARE @m_no_stock = '';
+ASSERT (SELECT COUNT(*) FROM LAPP_在庫 WHERE 残数 < 0) = 0, @m_no_stock;
+```
+
+### 多言語（日・英・中）
+
+**利用者の言語**（`ja` / `en` / `zh`。それ以外は `en`）で、設定した文字を出し分けます。
+**その言語が空（空白だけも空）なら既定のキー**に落ちます（英語・日本語には落ちません）。
+
+| 設定 | 足すキー |
+|---|---|
+| `actions[].name` / `actions[].description` | `name_ja` / `name_en` / `name_zh`、`description_*` |
+| `panel.title` | `title_*` |
+| `panel.sections[].name` | `name_*`（**表示名だけ**。`name` はキーのまま） |
+| `actions[].inputs[].label` | `label_*` |
+| `actions[].inputs[].options[]` | `options_ja` / `_en` / `_zh`（**ラベルの配列**。値は `options` のまま） |
+
+- すべて**任意**で、**空の言語はキーごと書かない**でください（設定が無駄に膨らみます）。
+- **区分の名称はキー**です。`name_*` を変えても `panelSection` や `panel.views[].sections` の参照は動きません。
+- **ログに残る名前は翻訳されません**（`name` のまま）。
+- 選択肢のラベルは**要素数が違っても保存できます**（足りない分は値がそのまま出ます）。
 
 ### `logApp`（任意）
 

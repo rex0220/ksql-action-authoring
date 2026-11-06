@@ -11,7 +11,12 @@ type Obj = Record<string, unknown>;
 
 const ENVELOPE_KEYS = ["appId", "appName", "PluginVersion"];
 /** アクションの、そのまま比べる値 */
-const ACTION_SCALARS = ["enabled", "name", "description", "type", "onList", "panelSection", "confirm", "writeLimit", "refreshPrompt", "selectionMode", "listOnError", "perRecordLock", "prevRecord", "allowAll", "loop", "loopOnError"];
+const ACTION_SCALARS = [
+  "enabled", "name", "description", "type", "onList", "panelSection", "confirm", "writeLimit",
+  "refreshPrompt", "selectionMode", "listOnError", "perRecordLock", "prevRecord", "allowAll", "loop", "loopOnError",
+  // 多言語の列（§8.5。2026-11-06）。無い → 入れた も差として出る
+  "name_ja", "name_en", "name_zh", "description_ja", "description_en", "description_zh",
+];
 /** アクションの、行の差分で見る文（SQL と計算式） */
 const ACTION_TEXTS = ["sql", "showCond", "execCond", "execNgMessage", "resultMessage", "groupFormula"];
 /** アクションの、まとめて比べる配列 */
@@ -111,6 +116,27 @@ function panelDiffs(a: Obj | undefined, b: Obj | undefined, out: string[]): void
   }
 }
 
+/**
+ * 共通の文の差（§8.4）。**コードごと**に比べる（並べ替えただけでは差にしない）。
+ * `panel` と同じ扱いで、ツールから読めない設定を「黙って消える」ままにしないため（§3.1）
+ */
+function messageDiffs(a: unknown, b: unknown, out: string[]): void {
+  const map = (v: unknown): Map<string, Obj> => new Map(objList(v).map((m) => [String(m.code ?? ""), m]));
+  const ma = map(a);
+  const mb = map(b);
+  const text = (m: Obj | undefined): string => {
+    if (!m) return "（無し）";
+    const langs = ["ja", "en", "zh"].map((l) => ({ l, v: String(m[`text_${l}`] ?? "").trim() })).filter(({ v }) => v !== "");
+    return `${String(m.text ?? "")}${langs.length > 0 ? `（${langs.map(({ l, v }) => `${l}: ${v}`).join(" / ")}）` : ""}`;
+  };
+  for (const code of new Set([...ma.keys(), ...mb.keys()])) {
+    const va = ma.get(code);
+    const vb = mb.get(code);
+    if (same(va, vb)) continue;
+    out.push(`共通設定 / メッセージ / ${code}: ${text(va)} → ${text(vb)}`);
+  }
+}
+
 /** 封筒 2 つを比べて、人が読む差分の文を返す（同じなら空文字） */
 /**
  * アクション 1 つ分の差（`kact_diff` と `kact_update_action` が使う）。
@@ -156,6 +182,7 @@ export function diffConfigs(before: Obj, after: Obj): string {
   // loopMax / runMax は 2026-11-05 にループと一緒に足した項目。漏れていた（2026-11-06 の試用 S3）
   scalarDiffs(a.limits as Obj | undefined, b.limits as Obj | undefined, ["readMax", "tempTableMax", "tempTotalMax", "timeoutMin", "apiTimeoutSec", "listBulkMax", "applySubtableMax", "loopMax", "runMax"], out, "共通設定 / 制限 / ");
   panelDiffs(a.panel as Obj | undefined, b.panel as Obj | undefined, out);
+  messageDiffs(a.messages, b.messages, out);
 
   const listA = (Array.isArray(a.actions) ? a.actions : []) as Obj[];
   const listB = (Array.isArray(b.actions) ? b.actions : []) as Obj[];

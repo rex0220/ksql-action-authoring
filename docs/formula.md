@@ -140,6 +140,27 @@
 | `$result_ms` | 経過ミリ秒 |
 | `$result_ok` / `$result_failed` / `$result_unprocessed` | 一覧のレコード数（成功 / 失敗 / 未処理）。一覧以外は 0 |
 
+## 共通の文（`$m_…`）
+
+共通設定の `messages` に書いた文を、**擬似項目 `$m_コード`** として式の中で使えます（section config の「共通の文」）。
+
+```
+// 実行条件 NG のメッセージ
+$m_no_amount
+// 結果メッセージ（件数を埋める。REPLACE は最初の 1 つだけ置き換える）
+REPLACE($m_done, "{n}", $result_total)
+```
+
+| 決め | 中身 |
+|---|---|
+| 使える口 | **`execNgMessage` / `resultMessage` / `inputs[].optionLabelsFormula` の 3 つだけ** |
+| ほかの口 | 表示条件・実行条件・パラメーター・既定値・選択肢の値・ループ・分ける式に書くと `message:slot` の error |
+| 無いコード | `message:unknown` の error（打ち間違い・消した文を指したまま） |
+| SQL では | `@m_コード`（**計算式に `@m_…` と書くと「無い項目」で落ちます**。記号は書く場所で決まる） |
+
+> **`messages` はツールからは足せません。** 今あるコードは `kact_actions` の返りの `messages` で分かります。
+> 新しい文が要るときは、利用者に設定画面の［メッセージ］で足してもらってください。
+
 ## よく使う式
 
 | したいこと | 式 |

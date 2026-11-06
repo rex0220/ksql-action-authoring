@@ -20,7 +20,7 @@ export const KSQL_ACTION_PLUGIN_ID = "afkekkiffjhdkcepekecalklafjhbcmf";
 /** tools が扱う kSQL アクションの版の下限（manifest.json の version。authoring API は Ver.1 から同梱） */
 export const MIN_PLUGIN_VERSION = 1;
 /** tools が対応する authoring API の版（ksql-action の src/authoring/api.ts の AUTHORING_API_VERSION） */
-export const SUPPORTED_API_VERSIONS: readonly number[] = [1, 2, 3, 4, 5, 6];
+export const SUPPORTED_API_VERSIONS: readonly number[] = [1, 2, 3, 4, 5, 6, 7];
 
 /** kSQL アクションの版として扱えるか（整数で MIN_PLUGIN_VERSION 以上） */
 export function isSupportedPluginVersion(version: string): boolean {
@@ -66,6 +66,37 @@ export const API_V5: Record<string, "function"> = { hasLoop: "function" };
  */
 
 /**
+ * 版 7（2026-11-06）で足した**共通の文（`messages`）と多言語**の口。
+ *
+ * 決まり（書ける式の口・擬似項目の作り方・参照の取り出し・言語の解き方）は**本体が正本**で、
+ * tools は写さない（本体の Codex レビュー MAJOR 5。写すと本物とずれる）。
+ * **`checkActionSql` の `options.messages` もこの版から要る**（渡さないと `DECLARE @m_…` が
+ * 「表に無い」で error になる＝黙って通さない向き）。
+ */
+export const API_V7: Record<string, "function" | "object" | "string" | "number"> = {
+  MESSAGE_SLOTS: "object",
+  slotAllowsMessages: "function",
+  MESSAGE_CODE_RE: "object",
+  MESSAGE_PREFIX: "string",
+  normalizeMessages: "function",
+  messageFields: "function",
+  messageTexts: "function",
+  messageValues: "function",
+  messageRefsOfAction: "function",
+  sqlMessageRefs: "function",
+  messageUsage: "function",
+  actionName: "function",
+  actionDescription: "function",
+  panelTitle: "function",
+  sectionLabel: "function",
+  inputLabel: "function",
+  inputOptionLabels: "function",
+  LANGS: "object",
+  measureConfigBytes: "function",
+  CONFIG_MAX_BYTES: "number",
+};
+
+/**
  * その版の zip の API に要るキーと型（ksql-action の api.ts の `AUTHORING_API_VERSION` と対）。
  * **古い版の zip も動かす**（足した口を使うツールだけが「zip が古い」と断る）。
  * **版を名乗る以上その口は揃っていること**を見る（2026-11-06 の Codex レビュー〈2 回目〉MINOR 1。
@@ -75,6 +106,7 @@ export function requiredApiFor(apiVersion: number): Record<string, "function" | 
   const api = { ...REQUIRED_API };
   if (apiVersion >= 4) Object.assign(api, API_V4);
   if (apiVersion >= 5) Object.assign(api, API_V5);
+  if (apiVersion >= 7) Object.assign(api, API_V7);
   return api;
 }
 
