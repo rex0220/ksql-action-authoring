@@ -392,21 +392,57 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
   // `wUnknownSection` は「定義に無い区分」だけを見るので、区分なしと
   // 「定義済みだが どの一覧にも載せていない」は素通りしていた
   for (const f of nowhereShownFindings(config, actions)) findings.push(f);
+  /**
+   * 控えの項目定義から作る client（API 版 3 の `createFieldsClient`）。**通信しない**（手元の
+   * `properties` を返すだけ）。これを `checkActionSql` に渡すと、選択肢の定義に無い値
+   * （`choiceUnknown`。API 版 8。§8.6）まで見てくれる。
+   * 控えが無いアプリがあると本体側が黙って飛ばすので、渡せるときだけ渡す
+   */
+  const fieldsClient = (() => {
+    const cache = opt.fields;
+    if (!cache || Object.keys(cache).length === 0) return undefined;
+    const make = (engine.api as { createFieldsClient?: (f: Record<string, Record<string, unknown>>) => unknown })
+      .createFieldsClient;
+    if (typeof make !== "function") return undefined;
+    try {
+      return make(cache as Record<string, Record<string, unknown>>);
+    } catch {
+      return undefined;
+    }
+  })();
   for (const [i, action] of actions.entries()) {
     if (action.enabled === false) continue;
     /**
      * 共通の文の表を**必ず渡す**（API 版 7。§8.4）。渡さないと `DECLARE @m_…` と
      * `ASSERT …, @m_…` が「表に無い」で error になる（本体が黙って通さない向きに倒してある）
      */
-    const r = (await engine.api.checkActionSql(action as never, bindings, { messages: config.messages })) as {
+    const r = (await engine.api.checkActionSql(action as never, bindings, {
+      messages: config.messages,
+      ...(fieldsClient ? { client: fieldsClient } : {}),
+    })) as {
       problems: Array<{ code: string; detail?: string; index?: number; kind?: string }>;
       warnings: Array<{ code: string; message: string }>;
+      /** API 版 8 から。古い zip では undefined */
+      choiceUnknown?: Array<{ field: string; value: string; kind: string; options: string[] }>;
     };
     const at = { actionIndex: i + 1, actionCode: String(action.code ?? "") };
     for (const p of r.problems) {
       findings.push({ level: "error", code: p.code, message: [p.detail, p.index ? `文 ${p.index}` : "", p.kind].filter(Boolean).join(" / ") || p.code, ...at });
     }
     for (const w of r.warnings) findings.push({ level: "warning", code: w.code, message: w.message, ...at });
+    /**
+     * 選択肢の定義に無い値（§8.6。API 版 8）。kintone の「言語ごとの名称」で選択肢に
+     * 表示名を付けている項目に**表示名**を書くと、エラーにならず **0 件**になる。
+     * SQL には `kact_fields` が見せている**既定の名称**を書く
+     */
+    for (const c of r.choiceUnknown ?? []) {
+      findings.push({
+        level: "warning",
+        code: "choice-unknown",
+        message: `${c.field} の選択肢に "${c.value}" はありません（選択肢: ${c.options.join(" / ")}）。項目に「言語ごとの名称」を設定していても、SQL には kact_fields が返す既定の名称を書きます`,
+        ...at,
+      });
+    }
   }
 
   // 4 計算式（項目定義があれば設定画面と同じ検査、無ければ構文だけ）

@@ -267,7 +267,14 @@ const CHOICE_TYPES = new Set(["DROP_DOWN", "RADIO_BUTTON", "CHECK_BOX", "MULTI_S
 
 /**
  * 選択肢の値を**画面の並び順**（`index`）で返す。選択系でなければ空。
- * kintone の `options` は `{ 値: { label, index } }` の形で、`label` は値と同じ（選択肢に別名は無い）。
+ * kintone の `options` は `{ 値: { label, index } }` の形。
+ *
+ * **`lang` を付けずに取っているので、ここで見えるのは「既定の名称」**（＝項目の設定画面の値）。
+ * kintone の「言語ごとの表示名」を設定した項目では、`lang: "user"` で取ると
+ * **キー自体が表示言語の名称に変わる**（`sample1` → `サンプル１`）。
+ * **SQL に書くのは既定の名称のほう**なので、`lang` は付けない（プラグインが実行時に
+ * 利用者の言語へ読み替える＝エンジン 3.91.0 の `optionNames: "canonical"`。本体の仕様 §8.6）。
+ * 以前ここに「選択肢に別名は無い」と書いていたのは誤り（2026-11-07 に訂正）。
  */
 function choiceOptions(p: FieldProperty): string[] {
   if (!CHOICE_TYPES.has(String(p.type ?? ""))) return [];

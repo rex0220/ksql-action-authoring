@@ -18,7 +18,7 @@
 ## 版の対応
 
 - `src/meta.ts` の `SUPPORTED_API_VERSIONS` は、本体（`ksql-action/src/authoring/api.ts`）の `AUTHORING_API_VERSION` と対で保つ。
-  本体が API の名前や引数を変えて版を上げたら、ここに足して試験を流す（今は **[1, 2, 3, 4, 5, 6, 7]**。版 2 = 封筒を migrate してから検証する `parseConfigFile`、版 3 = 実行計画の `explainActionSql` と、控えだけで動く `createFieldsClient`、版 4 = 計算式の**評価**（`evalFormula` / `evalCondition` / `toParamValue` / `withResultRecord`。`kact_try` が使う）、版 5 = `hasLoop`、版 6 = 結果の変数が `$result_*` に変わった（口は同じ）、版 7 = **共通の文（`messages`）と多言語**〈`checkActionSql` に `options.messages` が要る〉）。
+  本体が API の名前や引数を変えて版を上げたら、ここに足して試験を流す（今は **[1, 2, 3, 4, 5, 6, 7, 8]**。版 2 = 封筒を migrate してから検証する `parseConfigFile`、版 3 = 実行計画の `explainActionSql` と、控えだけで動く `createFieldsClient`、版 4 = 計算式の**評価**（`evalFormula` / `evalCondition` / `toParamValue` / `withResultRecord`。`kact_try` が使う）、版 5 = `hasLoop`、版 6 = 結果の変数が `$result_*` に変わった（口は同じ）、版 7 = **共通の文（`messages`）と多言語**〈`checkActionSql` に `options.messages` が要る〉、版 8 = **選択肢の「言語ごとの表示名」への逆向きの検査**〈`sqlChoiceLiterals` と、`checkActionSql` の返りの `choiceUnknown`。**控えから作る client（`createFieldsClient`）を渡したときだけ埋まる**〉）。
   **古い版の zip も動かす**（`requiredApiFor` は版ごとに要るキーを変え、足した口を使うツールだけが「zip が古い」と断る）。
   **埋め込む meta（`scripts/build.mjs` の `__KACT_TOOLS_META__`）は `src/meta.ts` から読む**。書き写すと食い違う
   （2026-10-31 に `supportedApiVersions: [1]` が残っていて、版 2 の zip を MCP が拒んだ）。
