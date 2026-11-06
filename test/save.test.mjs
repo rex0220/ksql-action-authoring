@@ -240,6 +240,27 @@ test("diffConfigs: パネル・区分（区分の増減と 画面 × 区分 の�
   assert.match(d3, /パネル: （区分なし）/);
 });
 
+// 2026-11-06 の試用 S3 の再実施: ツールは params[].enabled をわざと埋めない（古い zip が断る）ので、
+// 設定画面を一往復しただけで「変わった」と出ていた
+test("diffConfigs: params / inputs の enabled: true は省略と同じに見る", () => {
+  const env = (actions) => ({ pluginID: "rex0220 ksql action", appId: 1001, actions });
+  const act = (params) => [{ code: "sum", name: "集計", params }];
+  const noKey = env(act([{ name: "now", source: "formula", formula: "NOW()" }]));
+  const withTrue = env(act([{ enabled: true, name: "now", source: "formula", formula: "NOW()" }]));
+  const withFalse = env(act([{ enabled: false, name: "now", source: "formula", formula: "NOW()" }]));
+
+  assert.equal(diffConfigs(noKey, withTrue), "", "enabled: true を足しただけで差分が出ている");
+  assert.equal(diffConfigs(withTrue, noKey), "");
+  assert.match(diffConfigs(noKey, withFalse), /params:/, "enabled: false は意味があるので出す");
+
+  // inputs も同じ
+  const inp = (inputs) => env([{ code: "sum", name: "集計", inputs }]);
+  assert.equal(
+    diffConfigs(inp([{ name: "m", label: "月", type: "text" }]), inp([{ enabled: true, name: "m", label: "月", type: "text" }])),
+    "",
+  );
+});
+
 // loopMax / runMax は 2026-11-05 にループと一緒に足した項目。差分から漏れていた
 test("diffConfigs: 制限の loopMax / runMax と progressStyle も出す", () => {
   const env = (over) => ({ pluginID: "rex0220 ksql action", appId: 1001, actions: [], ...over });

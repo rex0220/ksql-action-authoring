@@ -21,6 +21,25 @@ const ACTION_LISTS = ["placements", "params", "inputs", "allowed"];
 const show = (v: unknown): string => (v === undefined ? "（無し）" : typeof v === "string" ? (v === "" ? "（空）" : v) : JSON.stringify(v));
 
 /**
+ * `params[]` / `inputs[]` の **`enabled: true` は「省略」と同じ**なので、比べる前に落とす。
+ *
+ * `enabled` は 2026-11-05 に足したキーで、保存済みの設定には無く本体の `migrateConfig` が `true` を入れる。
+ * ツールは**わざと埋めない**（埋めると古い版の zip が `unknown key` で断る。`save.ts`）ので、
+ * ツールが書いたファイルと設定画面を一往復したファイルを比べると、**中身は同じなのに差分が出ていた**
+ * （2026-11-06 の試用 S3 の再実施）。`enabled: false` は意味があるので残す。
+ */
+function dropDefaultEnabled(v: unknown): unknown {
+  if (!Array.isArray(v)) return v;
+  return v.map((x) => {
+    if (!x || typeof x !== "object" || Array.isArray(x)) return x;
+    const o = x as Record<string, unknown>;
+    if (o.enabled !== true) return o;
+    const { enabled: _drop, ...rest } = o;
+    return rest;
+  });
+}
+
+/**
  * 値を比べるための文字列（**キーの順は無視する**）。
  * 既定値で埋め直すとキーの順が変わるので、そのままの `JSON.stringify` では
  * 中身が同じ `params` / `inputs` が「変わった」ように出ていた（2026-10-28 の試用 S4）。
@@ -110,7 +129,11 @@ export function actionDiff(code: string, before: Obj | undefined, after: Obj | u
   }
   const at = `アクション ${code} / `;
   scalarDiffs(before, after, ACTION_SCALARS, out, at);
-  for (const k of ACTION_LISTS) if (!same(before[k], after[k])) out.push(`${at}${k}: ${show(before[k])} → ${show(after[k])}`);
+  for (const k of ACTION_LISTS) {
+    const b = k === "params" || k === "inputs" ? dropDefaultEnabled(before[k]) : before[k];
+    const a = k === "params" || k === "inputs" ? dropDefaultEnabled(after[k]) : after[k];
+    if (!same(b, a)) out.push(`${at}${k}: ${show(before[k])} → ${show(after[k])}`);
+  }
   for (const k of ACTION_TEXTS) {
     const s1 = String(before[k] ?? "");
     const s2 = String(after[k] ?? "");
