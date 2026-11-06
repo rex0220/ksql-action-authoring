@@ -224,6 +224,30 @@ test("summarizeFields: 自動の項目・計算・ルックアップのコピー
   assert.equal(byCode["レコード番号"].writable, false);
 });
 
+// 2026-11-06 の試用 S4: 標準形は `WHERE 請求対象 = '対象'` と選択肢の値を SQL に書くのに、
+// 要約が選択肢を返さなかった。「推測しない」決まりと噛み合わず、
+// kact_try にわざと外した値を渡してエラー文から読むのが唯一の手になっていた
+test("summarizeFields: 選択系の項目は選択肢の値を画面の並び順で返す", { skip }, () => {
+  const props = {
+    請求対象: {
+      type: "DROP_DOWN", code: "請求対象", label: "請求対象",
+      // kintone は並び順を index で返す（キーの順ではない）
+      options: { 対象外: { label: "対象外", index: "1" }, 対象: { label: "対象", index: "0" } },
+    },
+    区分: {
+      type: "CHECK_BOX", code: "区分", label: "区分",
+      options: { B: { label: "B", index: "1" }, A: { label: "A", index: "0" } },
+    },
+    担当者: { type: "SINGLE_LINE_TEXT", code: "担当者", label: "担当者" },
+    金額: { type: "NUMBER", code: "金額", label: "金額" },
+  };
+  const byCode = Object.fromEntries(fields.summarizeFields(props).map((f) => [f.code, f]));
+  assert.deepEqual(byCode["請求対象"].options, ["対象", "対象外"], "index の順（キーの順ではない）");
+  assert.deepEqual(byCode["区分"].options, ["A", "B"]);
+  assert.equal(byCode["担当者"].options, undefined, "選択系でない項目には付けない");
+  assert.equal(byCode["金額"].options, undefined);
+});
+
 // --- 項目定義つきの計算式の検査（kact_check の段階 3） ---
 
 const envelope = (over = {}) => JSON.stringify({

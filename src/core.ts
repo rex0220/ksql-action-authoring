@@ -388,6 +388,10 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
   // アクションは**どの一覧にも出ない**（詳細画面はボタンとして出る）。設定画面の区分欄は
   // 選択式なので起きないが、**ファイルから作るときは素通り**して、静かに消える
   for (const f of unknownSectionFindings(config, actions)) findings.push(f);
+  // 2c 一覧に出るのに `panel.views` のどの行にも載っていない（2026-11-06 の試用 S4）。
+  // `wUnknownSection` は「定義に無い区分」だけを見るので、区分なしと
+  // 「定義済みだが どの一覧にも載せていない」は素通りしていた
+  for (const f of nowhereShownFindings(config, actions)) findings.push(f);
   for (const [i, action] of actions.entries()) {
     if (action.enabled === false) continue;
     const r = (await engine.api.checkActionSql(action as never, bindings)) as {
@@ -614,6 +618,75 @@ export function unknownSectionFindings(
             : "。")
         + " 区分を `panel.sections` に足すか、既にある区分の名前に直してください"
         + "（区分の追加・名前の確認は設定画面の［パネル・区分］で行います。ツールからは `panel` を読めません）",
+      actionIndex: i + 1,
+      actionCode: String(action.code ?? ""),
+    });
+  }
+  return out;
+}
+
+/**
+ * 一覧に出るアクションが、**`panel.views` のどの行にも載っていない**か
+ * （2026-11-06 の試用 S4）。
+ *
+ * 一覧の起動口は `viewRow.sections.includes(a.panelSection.trim())`（パネル）と
+ * `viewRow.menus`（メニュー）で選ぶ（本体の `src/desktop/index-screen.ts`）。
+ * **並べるのは「区分の名前」で、区分を付けていないアクションの名前は `""`**。
+ * だから `"sections": [""]` が「区分なしのボタンをパネルに出す」指定で、
+ * **`"sections": []` は「この一覧には何も出さない」**（空は「ぜんぶ」ではない）。
+ *
+ * `wUnknownSection` が見るのは「定義に無い区分」だけなので、
+ * - 区分なし（`""`）で、どの行にも `""` を載せていない
+ * - 定義済みの区分だが、どの行の `sections` / `menus` にも載せていない
+ * の 2 つは素通りして、**警告なしでどこにも出ない設定**になっていた。
+ * 本体の設定画面は後者に「nowhere」の印を出すが（`src/config/screen.ts`）、
+ * 前者は `if (name === "") return "";` で早期に抜けるので印も出ない。
+ * どちらも**ファイルから作るときだけの穴**で、`wUnknownSection` と同じ理由で拾う。
+ *
+ * `panel` を省いた設定は既定（`sections: [""]`）なので**出る**。省略を既定として扱う。
+ * イベント起動だけのアクションと、詳細画面のボタンがあるものには出さない（出る口がある）。
+ */
+export function nowhereShownFindings(
+  config: Record<string, unknown>,
+  actions: Array<Record<string, unknown>>,
+): Finding[] {
+  const panel = (config.panel && typeof config.panel === "object" ? config.panel : {}) as Record<string, unknown>;
+  // `panel` も `views` も省けるので、省略は既定（「ほかの一覧すべて」に区分なしのボタン）として読む
+  const rows = Array.isArray(panel.views)
+    ? (panel.views as unknown[]).filter((v): v is Record<string, unknown> => !!v && typeof v === "object")
+    : [{ viewId: "*", sections: [""], menus: [] } as Record<string, unknown>];
+  const namesOf = (row: Record<string, unknown>, key: "sections" | "menus"): string[] =>
+    Array.isArray(row[key]) ? (row[key] as unknown[]).map((s) => String(s ?? "").trim()) : [];
+  /** 一覧の行だけ（`viewId: "detail"` は詳細画面の行なので一覧には関係しない） */
+  const listRows = rows.filter((r) => r.enabled !== false && String(r.viewId ?? "") !== "detail");
+  const shown = new Set<string>();
+  for (const row of listRows) {
+    for (const n of namesOf(row, "sections")) shown.add(n);
+    for (const n of namesOf(row, "menus")) shown.add(n);
+  }
+  const out: Finding[] = [];
+  for (const [i, action] of actions.entries()) {
+    if (action.enabled === false) continue;
+    const onList = action.type === "app" || action.onList === true;
+    if (!onList) continue;
+    const name = String(action.panelSection ?? "").trim();
+    const placements = Array.isArray(action.placements) ? action.placements.map((p) => String(p)) : [];
+    const onDetail = placements.includes("detail_menu");
+    const onEvent = placements.some((p) => p.startsWith("event_"));
+    // 出る口がほかにあるものは黙る（詳細画面のボタン・イベント起動）
+    if (onDetail || onEvent) continue;
+    if (shown.has(name)) continue;
+    const where = name === "" ? "区分なし（`\"\"`）" : `区分「${name}」`;
+    const fix = name === ""
+      ? "`panel.views` の行の `sections` に `\"\"` を足してください（例 `\"sections\": [\"\"]`）"
+      : `\`panel.views\` の行の \`sections\`（パネル）か \`menus\`（メニュー）に「${name}」を足してください`;
+    out.push({
+      level: "warning",
+      code: "wNowhereShown",
+      message:
+        `${where}のアクションですが、\`panel.views\` のどの一覧の行にも載っていないので`
+        + "**どの一覧にも出ません**。`placements` に `detail_menu` もイベントも無いので、**どこにも出ません**。"
+        + `${fix}（\`sections: []\` は「この一覧には何も出さない」で、「ぜんぶ出す」ではありません）`,
       actionIndex: i + 1,
       actionCode: String(action.code ?? ""),
     });

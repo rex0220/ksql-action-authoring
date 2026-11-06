@@ -192,6 +192,66 @@ test("checkConfig: 定義に無い区分は警告（保存は止めない）", {
   assert.match(w2.message, /詳細画面にはボタンとして出ます/);
 });
 
+// 2026-11-06 の試用 S4: 区分なしのアクションを `views[].sections` に載せ忘れると、
+// どこにも出ないのに警告が無かった（`wUnknownSection` は「定義に無い区分」だけを見る）。
+// `sections: []` は「この一覧には何も出さない」で、「ぜんぶ出す」ではない
+test("checkConfig: 一覧のどの行にも載っていないアクションは警告（保存は止めない）", { skip }, async () => {
+  const build = (panel, over) => envelope({
+    configVersion: 1, bindings: [{ name: "受注", appId: 1001 }],
+    limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+    timezone: "",
+    ...(panel === undefined ? {} : { panel }),
+    actions: [{
+      enabled: true, code: "rebuild", name: "作り直す", description: "", type: "app", onList: false,
+      placements: [], panelSection: "", showCond: "", execCond: "", execNgMessage: "",
+      params: [], inputs: [], sql: "-- @ksql dialect: 1\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 処理状況 = '';",
+      staticInsertRows: 0, confirm: true, writeLimit: 10, refreshPrompt: "auto", allowed: [], allowAll: true,
+      resultMessage: "", listOnError: "continue", selectionMode: "once", groupFormula: "", perRecordLock: false, prevRecord: false,
+      ...over,
+    }],
+  });
+  const panelOf = (views) => ({ title: "", sectionColumns: 1, buttonWidth: 200, buttonLogLink: false, sections: [], views });
+  const row = (over) => ({ viewId: "*", sections: [], menus: [], open: false, ...over });
+
+  // 区分なしなのに sections が空 → どこにも出ない
+  const empty = await core.checkConfig(build(panelOf([row({})])), { pluginZip: ZIP });
+  assert.equal(empty.status, "ok", "警告なので保存は止めない");
+  const w = empty.findings.find((f) => f.code === "wNowhereShown");
+  assert.ok(w, JSON.stringify(empty.findings));
+  assert.equal(w.level, "warning");
+  assert.equal(w.actionCode, "rebuild");
+  assert.match(w.message, /どこにも出ません/);
+
+  // `sections: [""]` なら出る（既定と同じ形）
+  const shown = await core.checkConfig(build(panelOf([row({ sections: [""] })])), { pluginZip: ZIP });
+  assert.equal(shown.findings.filter((f) => f.code === "wNowhereShown").length, 0, JSON.stringify(shown.findings));
+
+  // **`panel` を省いても既定にはならない。** `migrateConfig` は `panel.views` を
+  // 旧い起動口（`index_panel` / `index_menu`）から起こすので、今の形のアクション
+  // （`type: "app"` ＋ `placements: []`）では `sections: []` の行になり、どこにも出ない。
+  // `defaultPanel()` の `sections: [""]` が当たるのは、設定を新規に作る経路だけ
+  const omitted = await core.checkConfig(build(undefined), { pluginZip: ZIP });
+  assert.ok(omitted.findings.some((f) => f.code === "wNowhereShown"), JSON.stringify(omitted.findings));
+
+  // 名前付きの区分だけ並べた行では、区分なしのアクションは出ない
+  const named = await core.checkConfig(build(panelOf([row({ sections: ["受注"] })])), { pluginZip: ZIP });
+  assert.ok(named.findings.some((f) => f.code === "wNowhereShown"), JSON.stringify(named.findings));
+
+  // 詳細画面のボタンがあるものには出さない（出る口がある）
+  const onDetail = await core.checkConfig(
+    build(panelOf([row({})]), { type: "record", onList: true, placements: ["detail_menu"] }),
+    { pluginZip: ZIP },
+  );
+  assert.equal(onDetail.findings.filter((f) => f.code === "wNowhereShown").length, 0, JSON.stringify(onDetail.findings));
+
+  // 詳細画面の行（viewId: "detail"）の menus は一覧に出す指定ではない
+  const detailRow = await core.checkConfig(
+    build(panelOf([row({ viewId: "detail", menus: [""] }), row({})])),
+    { pluginZip: ZIP },
+  );
+  assert.ok(detailRow.findings.some((f) => f.code === "wNowhereShown"), JSON.stringify(detailRow.findings));
+});
+
 // 2026-11-06 の試用 S1: 推奨の標準形（キーの配列）がいつも FULL_SCAN・constant false に見え、
 // 「条件が効かず全件に当たる」を見つけるための計画が、その判定に使えなかった
 test("arrayDeclareNames: 配列で宣言した変数を拾う（コメントは見ない）", () => {

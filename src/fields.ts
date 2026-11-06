@@ -50,6 +50,13 @@ export interface FieldSummary {
   readOnly?: "auto" | "calc" | "lookupCopy";
   /** ルックアップの項目（キーを入れると関連する値が写る） */
   lookup?: true;
+  /**
+   * **選択肢の値**（`DROP_DOWN` / `RADIO_BUTTON` / `CHECK_BOX` / `MULTI_SELECT`。画面の並び順）。
+   * SQL の条件（`WHERE 請求対象 = '対象'`）と計算式に書くのは**この値**。
+   * 返さないと「選択肢は推測しない」決まりと、標準形が選択肢を SQL に書くことが噛み合わない
+   * （2026-11-06 の試用 S4。`kact_try` にわざと外した値を渡してエラー文から読む、が唯一の手だった）
+   */
+  options?: string[];
 }
 
 /** 一覧で集めるアプリの上限（大きなドメインで延々と読まない。超えたら「続きがある」と伝える） */
@@ -248,7 +255,30 @@ function summarizeOne(code: string, p: FieldProperty, copyTargets: Set<string>, 
     ...(table ? { table } : {}),
     ...(p.lookup ? { lookup: true as const } : {}),
     ...(readOnly ? { writable: false as const, readOnly } : {}),
+    ...(() => {
+      const options = choiceOptions(p);
+      return options.length > 0 ? { options } : {};
+    })(),
   };
+}
+
+/** 選択系の項目の型（選択肢の値を SQL と計算式に書く） */
+const CHOICE_TYPES = new Set(["DROP_DOWN", "RADIO_BUTTON", "CHECK_BOX", "MULTI_SELECT"]);
+
+/**
+ * 選択肢の値を**画面の並び順**（`index`）で返す。選択系でなければ空。
+ * kintone の `options` は `{ 値: { label, index } }` の形で、`label` は値と同じ（選択肢に別名は無い）。
+ */
+function choiceOptions(p: FieldProperty): string[] {
+  if (!CHOICE_TYPES.has(String(p.type ?? ""))) return [];
+  const options = p.options;
+  if (!options || typeof options !== "object") return [];
+  const rows = Object.entries(options as Record<string, unknown>).map(([value, def]) => {
+    const index = def && typeof def === "object" ? Number((def as { index?: unknown }).index) : NaN;
+    return { value, index: Number.isFinite(index) ? index : Number.MAX_SAFE_INTEGER };
+  });
+  rows.sort((a, b) => (a.index - b.index) || a.value.localeCompare(b.value));
+  return rows.map((r) => r.value);
 }
 
 /**
