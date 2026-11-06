@@ -368,9 +368,15 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
     findings.push({ level: "error", code: "schema", message: e instanceof Error ? e.message : String(e) });
   }
 
-  // 2 横断の検査（コードの重複・イベントの整合など）
+  // 2 横断の検査（コードの重複・イベントの整合など）。
+  // 本体が返すのは `action[0]:app:placement` のような**規則のコードだけ**で、
+  // 何を直せばよいかが読めない（2026-11-06 の試用 S2）。読み方を添える
   for (const issue of engine.api.validateConfig(config as never) as string[]) {
-    findings.push({ level: "error", code: "config", message: issue });
+    findings.push({
+      level: "error",
+      code: "config",
+      message: `${issue}（設定の規則に反している。形は「どこ:規則」で、action[n] は n 番目のアクション（0 から）。意味は kact_docs の section config）`,
+    });
   }
 
   // 3 アクションごとの SQL

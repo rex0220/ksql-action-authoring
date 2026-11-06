@@ -55,6 +55,42 @@ test("saveConfig: 検査を通る設定を保存する（既定値で埋まる�
   assert.equal(env.actions[0].staticInsertRows, 0);
 });
 
+// 2026-11-06 の試用 S2: 種類 app のアクションを「変えるところだけ」書いて保存すると、
+// 既定の placements（["detail_menu"]）が当たって必ず action[0]:app:placement で落ちた
+test("saveConfig: 種類 app は placements を書かなくても保存できる（既定の detail_menu を当てない）", { skip }, async () => {
+  const appAction = {
+    code: "agg",
+    name: "集計する",
+    type: "app",
+    panelSection: "集計",
+    params: [],
+    sql: "-- @ksql dialect: 1\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 処理状況 = '';",
+  };
+  const cfg = {
+    bindings: [{ name: "受注", appId: 1001 }],
+    panel: {
+      title: "", sectionColumns: 1, buttonWidth: 200, buttonLogLink: false,
+      sections: [{ enabled: true, name: "集計", color: "blue", tone: "soft", collapsed: false }],
+      views: [{ viewId: "*", sections: ["集計"], menus: [], open: false }],
+    },
+    actions: [appAction],
+  };
+  const r = await save.saveConfig({ file: "settings/kact-app-type.json", appId: 1001, config: cfg }, opt);
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  const env = JSON.parse(readFileSync(join(ws, "settings/kact-app-type.json"), "utf8"));
+  assert.deepEqual(env.actions[0].placements, [], "種類 app の placements が空になっていない");
+
+  // 自分で detail_menu と書いたなら、それは誤りとして落とす（埋めるのは書いていないときだけ）
+  const wrong = await save.saveConfig(
+    { file: "settings/kact-app-type-wrong.json", appId: 1001, config: { ...cfg, actions: [{ ...appAction, placements: ["detail_menu"] }] } },
+    opt,
+  );
+  assert.equal(wrong.status, "invalid");
+  assert.ok(wrong.findings.some((f) => f.message.includes("app:placement")), JSON.stringify(wrong.findings));
+  // 規則のコードだけでは直せないので、読み方を添える
+  assert.ok(wrong.findings.some((f) => f.message.includes("kact_docs")), JSON.stringify(wrong.findings));
+});
+
 test("saveConfig: 同じ名前は上書きしない（conflict）", { skip }, async () => {
   const r = await save.saveConfig({ file: "settings/kact-1001.json", appId: 1001, config: config() }, opt);
   assert.equal(r.status, "conflict");

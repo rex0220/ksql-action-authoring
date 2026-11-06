@@ -54,7 +54,16 @@ function actionWithDefaults(engine: Engine, action: unknown): Record<string, unk
   if (!isObject(action)) return {};
   const code = typeof action.code === "string" ? action.code : "";
   const name = typeof action.name === "string" ? action.name : code;
-  const merged = { ...(engine.api.defaultAction(code, name) as Record<string, unknown>), ...action };
+  const defaults = { ...(engine.api.defaultAction(code, name) as Record<string, unknown>) };
+  /**
+   * 本体の `defaultAction` は**種類 record の既定**（`placements: ["detail_menu"]`）を返す。
+   * 種類 `app` は詳細画面に出ないので、これを当てると**必ず** `app:placement` で落ちた
+   * （2026-11-06 の試用 S2。資料は「足りないキーは既定値で埋まる」と書いてあるのに、
+   * 種類 app のアクションは `placements: []` を自分で書かないと保存できなかった）。
+   * **書いていないときだけ**空にする（`["detail_menu"]` と自分で書いたなら、それは誤りとして落とす）。
+   */
+  if (action.type === "app" && action.placements === undefined) defaults.placements = [];
+  const merged = { ...defaults, ...action };
   if (Array.isArray(action.params)) merged.params = action.params.map(paramWithDefaults);
   if (Array.isArray(action.inputs)) merged.inputs = action.inputs.map(inputWithDefaults);
   return merged;
