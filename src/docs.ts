@@ -137,16 +137,39 @@ export function splitEntries(s: DocSection): Entry[] {
   return out;
 }
 
-/** query に合う節（空白で区切った言葉を全部含む節。順は問わない） */
-export function search(query: string, key?: string): { text: string; count: number; truncated: boolean } {
+/**
+ * query に合う節（空白で区切った言葉を全部含む節。順は問わない）。
+ *
+ * **全部を含む節が 1 つも無いときは、どれかを含む節に落として探し直す**（`relaxed: true` を返す）。
+ * 自然な問いは言葉が多くなりがちで（「キーの配列 イベント起動 確認なし 書き込み上限」）、
+ * 全部を含む 1 つの節は無いことがほとんど。そこで「合う節は無い」と突き返すと、
+ * 資料にちゃんと書いてあるのに推測で設定を作られる（2026-11-06 の試用 S1）。
+ * 合う言葉の多い節から順に返す。
+ */
+export function search(query: string, key?: string): { text: string; count: number; truncated: boolean; relaxed?: boolean; terms?: string[] } {
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const targets = key ? DOCS.sections.filter((s) => s.key === key) : DOCS.sections;
-  const hits: Entry[] = [];
+  let hits: Entry[] = [];
+  let relaxed = false;
   for (const s of targets) {
     for (const e of splitEntries(s)) {
       const hay = `${e.context}\n${e.text}`.toLowerCase();
       if (terms.every((t) => hay.includes(t))) hits.push(e);
     }
+  }
+  if (hits.length === 0 && terms.length > 1) {
+    relaxed = true;
+    const scored: Array<{ e: Entry; n: number }> = [];
+    for (const s of targets) {
+      for (const e of splitEntries(s)) {
+        const hay = `${e.context}\n${e.text}`.toLowerCase();
+        const n = terms.filter((t) => hay.includes(t)).length;
+        if (n > 0) scored.push({ e, n });
+      }
+    }
+    // 合う言葉が多い順。同じなら資料の並び（scored は章と節の順に積んである）
+    scored.sort((a, b) => b.n - a.n);
+    hits = scored.map((x) => x.e);
   }
   const parts: string[] = [];
   let chars = 0;
@@ -161,5 +184,5 @@ export function search(query: string, key?: string): { text: string; count: numb
     chars += block.length;
   }
   if (hits.length > QUERY_MAX_ENTRIES) truncated = true;
-  return { text: parts.join("\n\n"), count: hits.length, truncated };
+  return { text: parts.join("\n\n"), count: hits.length, truncated, relaxed, terms };
 }

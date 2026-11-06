@@ -143,8 +143,21 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
       }
       if (query !== undefined) {
         const r = search(query, section);
-        if (r.count === 0) return text(`「${query}」に合う節は無い${section ? `（section: ${section}）` : ""}。目次は引数なしの kact_docs`);
-        return text(`「${query}」に合う節 ${r.count} 件${r.truncated ? "（上限で打ち切った。言葉を絞る）" : ""}:\n\n${r.text}`);
+        if (r.count === 0) {
+          // 探すのは**空白で区切った言葉**なので、日本語の一文（空白が無い）は 1 つの長い言葉になって当たらない。
+          // 問いをそのまま「例」に出すと役に立たないので、短い言葉の例と章の一覧を添える（2026-11-06 の試用 S1）
+          return text(
+            `「${query}」に合う節は無い${section ? `（section: ${section}）` : ""}。`
+            + "探すのは**空白で区切った言葉**なので、文のまま渡すと当たらない。"
+            + "**短い言葉を 1 つか 2 つ**にする（例:「キーの配列」「イベント起動」「書き込み上限」）か、"
+            + `章ごと読む（section: ${sectionKeys().join("、")}）。目次は引数なしの kact_docs`,
+          );
+        }
+        // 全部の言葉を含む節が無ければ、どれかを含む節に落として返す（言葉を減らす手間を省く）
+        const head = r.relaxed
+          ? `「${query}」の**全部**を含む節は無い。言葉のどれかを含む節 ${r.count} 件（合う言葉の多い順）`
+          : `「${query}」に合う節 ${r.count} 件`;
+        return text(`${head}${r.truncated ? "（上限で打ち切った。言葉を絞る）" : ""}:\n\n${r.text}`);
       }
       if (section !== undefined) return text(sectionText(sectionOf(section)!));
       return text(indexText());

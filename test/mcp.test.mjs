@@ -144,6 +144,28 @@ test("kact_docs: query で合う節だけを返す", { skip }, async () => {
   assert.match(none, /合う節は無い/);
 });
 
+// 2026-11-06 の試用 S1: 自然な問い（言葉が多い）で 0 件になり、資料に書いてあるのに
+// 推測で設定を作られかけた。全部を含む節が無ければ、どれかを含む節に落として返す
+test("kact_docs: 全部の言葉を含む節が無ければ、どれかを含む節に落として返す", { skip }, async () => {
+  const t = await callText("kact_docs", { query: "キーの配列 イベント起動 確認なし 書き込み上限" });
+  assert.doesNotMatch(t, /合う節は無い/, "言葉が多いだけで突き返している");
+  assert.match(t, /全部\*\*を含む節は無い/);
+  assert.match(t, /合う言葉の多い順/);
+  assert.match(t, /キーの配列/, "いちばん合う節（config のキーの配列）が返っていない");
+});
+
+// 1 件も無ければ、短い言葉の例と章の一覧を添える（問いをそのまま「例」に出さない）。
+// 日本語の一文は空白が無いので 1 つの長い言葉になり、必ずここに来る（2026-11-06 の試用 S1 の再実施）
+test("kact_docs: 1 件も無いときは短い言葉の例と章の一覧を添える", { skip }, async () => {
+  const q = "受注を直したら自動で集計を作り直す";
+  const t = await callText("kact_docs", { query: q });
+  assert.match(t, /合う節は無い/);
+  assert.match(t, /短い言葉を 1 つか 2 つ/);
+  assert.match(t, /キーの配列/, "短い言葉の例が無い");
+  assert.match(t, /section: .*patterns/, "章の一覧が無い");
+  assert.equal(t.split(q).length - 1, 1, "問いをそのまま例として繰り返している");
+});
+
 test("kact_status: tools の版と対応する API の版を返す", { skip }, async () => {
   const r = await call(client, "kact_status");
   assert.equal(r.tools.mode, "build");

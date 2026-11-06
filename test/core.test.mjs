@@ -146,6 +146,42 @@ test("explainAction: 控えの項目定義だけで実行計画を出す（kinto
   assert.ok(noFields.findings.some((f) => f.code === "fields-missing"), JSON.stringify(noFields.findings));
 });
 
+// 2026-11-06 の試用 S1: 推奨の標準形（キーの配列）がいつも FULL_SCAN・constant false に見え、
+// 「条件が効かず全件に当たる」を見つけるための計画が、その判定に使えなかった
+test("arrayDeclareNames: 配列で宣言した変数を拾う（コメントは見ない）", () => {
+  assert.deepEqual(core.arrayDeclareNames("-- @ksql dialect: 1\nDECLARE @keys = [];\nDECLARE @now = '';\n"), ["keys"]);
+  assert.deepEqual(core.arrayDeclareNames("DECLARE @_selected = [];\nDECLARE @a = [1, 2];\n"), ["_selected", "a"]);
+  assert.deepEqual(core.arrayDeclareNames("-- DECLARE @keys = [];\nDECLARE @cust = '';\n"), [], "コメントの中を拾っている");
+  assert.deepEqual(core.arrayDeclareNames("declare @Keys = [ ];\n"), ["Keys"], "大文字小文字を無視していない");
+});
+
+test("explainAction: 配列の変数があれば constant false の読み方を注記する", { skip }, async () => {
+  const props = (names) =>
+    Object.fromEntries(names.map((n) => [n, { type: n === "金額" || n === "件数" ? "NUMBER" : "SINGLE_LINE_TEXT", code: n, label: n }]));
+  const config = {
+    configVersion: 1,
+    bindings: [{ name: "受注", appId: 4377 }, { name: "集計", appId: 4378 }],
+    limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+    timezone: "",
+    actions: [{
+      enabled: true, code: "upd", name: "キーの配列で更新", description: "", type: "record", onList: false,
+      placements: ["event_edit"], panelSection: "", showCond: "", execCond: "", execNgMessage: "",
+      params: [{ name: "keys", source: "keys", formula: "顧客コード" }], inputs: [],
+      sql: "-- @ksql dialect: 1\nDECLARE @keys = [];\nUPDATE LAPP_集計 SET 件数 = 0 WHERE 顧客コード IN @keys;",
+      staticInsertRows: 0, confirm: false, writeLimit: 10, refreshPrompt: "auto", allowed: [], allowAll: true,
+      resultMessage: "", listOnError: "continue", selectionMode: "loop", groupFormula: "", perRecordLock: false, prevRecord: false,
+    }],
+  };
+  const fields = { "4377": props(["顧客コード", "金額"]), "4378": props(["顧客コード", "件数"]) };
+  const r = await core.explainAction(envelope(config), { action: "upd" }, { pluginZip: ZIP, fields });
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  const note = r.findings.find((f) => f.code === "explain-array-empty");
+  assert.ok(note, JSON.stringify(r.findings));
+  assert.equal(note.level, "info", "保存を止める話ではない");
+  assert.match(note.message, /@keys/);
+  assert.match(note.message, /条件が効いていないという意味ではない/);
+});
+
 test("checkConfig: 許されない SQL は invalid（プラグイン本体と同じ規則）", { skip }, async () => {
   const config = {
     configVersion: 1, bindings: [{ name: "受注", appId: 4377 }],

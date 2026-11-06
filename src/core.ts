@@ -539,7 +539,37 @@ export async function explainAction(text: string, input: { action: string | numb
   for (const id of missing) {
     findings.push({ level: "warning", code: "fields-missing", message: `アプリ ${id} の項目定義の控えが無いまま計画を出した（kact_fields で取ると正しくなる）` });
   }
+  const arrayVars = arrayDeclareNames(String(action.sql ?? ""));
+  if (arrayVars.length > 0) {
+    findings.push({
+      level: "info",
+      code: "explain-array-empty",
+      message:
+        `配列の変数（${arrayVars.map((n) => `@${n}`).join(" / ")}）は、計画では**空の配列**として扱われる`
+        + "（実行計画は値を注入しない）。そのため `IN @…` の文は `predicate: constant false`・`mode: FULL_SCAN` と出て、"
+        + "読み取りの見積もりも上限（`readMax`）での最大になる。**条件が効いていないという意味ではない**"
+        + "（実行時は `IN (…)` で絞られ、kintone の条件として送られる）。"
+        + "計画で全件取得を見つけたいときは、`WHERE` を書き忘れた文に `predicate` の行が無いことを見る",
+    });
+  }
   return { status: "ok", action: { index: at + 1, code: String(action.code ?? ""), name: String(action.name ?? "") }, statements, usedApps, findings };
+}
+
+/**
+ * SQL の中の**配列で宣言した変数**の名前（`DECLARE @keys = [];`）。
+ * 実行計画はパラメーターを注入しないので、これらは空の配列として計画される。
+ * `IN @keys` が `constant false` に見える理由を `kact_explain` の注記で伝えるために使う
+ * （2026-11-06 の試用 S1。推奨の標準形がいつも全件取得のように見えていた）
+ */
+export function arrayDeclareNames(sql: string): string[] {
+  const names: string[] = [];
+  // 行コメント（`--`）の中は見ない。`DECLARE @名前 = [ … ]`（空でも要素があっても）を拾う
+  for (const raw of sql.split(/\r?\n/)) {
+    const line = raw.replace(/--.*$/, "");
+    const m = /\bDECLARE\s+@([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\[/i.exec(line);
+    if (m && !names.includes(m[1])) names.push(m[1]);
+  }
+  return names;
 }
 
 /** 設定の中身を一覧（kact_actions）。**SQL 本文と値は返さない** */
