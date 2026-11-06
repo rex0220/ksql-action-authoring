@@ -244,6 +244,61 @@ const envelope = (over = {}) => JSON.stringify({
   }],
 });
 
+/**
+ * ループのあるアクションは、パラメーターの式で `$val` / `$lno` が使える（本体の `paramContext` / `keysContext`）。
+ * 2026-11-06 の Codex レビュー MAJOR 3: tools が `loopParam` を使っておらず、
+ * **`loop` の章が勧める `"formula": "2017 + $val"` を「無い項目」で拒んでいた**。
+ * 項目定義があるときだけ出る誤りなので、`fields` を渡す試験でないと捕まえられない。
+ */
+test("checkConfig: ループのパラメーターで $val / $lno が使える（formula も keys も）", { skip }, async () => {
+  const sql = "-- @ksql dialect: 1\nDECLARE @year = '';\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 顧客コード = @year;";
+  const ok = await core.checkConfig(envelope({
+    loop: "3", writeLimit: 10, confirm: true,
+    params: [{ name: "year", source: "formula", formula: "2017 + $val" }], sql,
+  }), { pluginZip: ZIP, fields: PROPERTIES });
+  assert.equal(ok.summary?.formulaCheck ?? "(なし)", "fields");
+  assert.equal(ok.status, "ok", JSON.stringify(ok.findings));
+
+  const keysSql = "-- @ksql dialect: 1\nDECLARE @keys = [];\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 顧客コード IN @keys;";
+  const okKeys = await core.checkConfig(envelope({
+    loop: "3", writeLimit: 10, confirm: true,
+    params: [{ name: "keys", source: "keys", formula: 'IF($lno = 0, 顧客コード, "")' }], sql: keysSql,
+  }), { pluginZip: ZIP, fields: PROPERTIES });
+  assert.equal(okKeys.status, "ok", JSON.stringify(okKeys.findings));
+
+  // ループが無ければ $val は「無い項目」のまま（緩めすぎていないこと）
+  const ng = await core.checkConfig(envelope({
+    params: [{ name: "cust", source: "formula", formula: "2017 + $val" }],
+  }), { pluginZip: ZIP, fields: PROPERTIES });
+  assert.equal(ng.status, "invalid", JSON.stringify(ng.findings));
+  assert.ok(ng.findings.some((f) => f.code === "pFormulaField"), JSON.stringify(ng.findings));
+});
+
+/**
+ * `$val` / `$lno` が使えるのは**パラメーターの式だけ**（本体の `paramContext` / `keysContext`）。
+ * 2026-11-06 の Codex レビュー（2 回目）MAJOR 1: ループがあると表示条件・実行条件まで許していた。
+ * 同 MAJOR 2: ループの式そのものを検査していなかった（本体の `dialogs.ts` は見ている）。
+ */
+test("checkConfig: ループ値はパラメーターの式だけ。条件とループ式では誤りになる", { skip }, async () => {
+  const sql = "-- @ksql dialect: 1\nDECLARE @year = '';\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 顧客コード = @year;";
+  const base = { loop: "3", writeLimit: 10, confirm: true, params: [{ name: "year", source: "formula", formula: "2017 + $val" }], sql };
+
+  // 表示条件に $val は使えない
+  const cond = await core.checkConfig(envelope({ ...base, showCond: "$val > 0" }), { pluginZip: ZIP, fields: PROPERTIES });
+  assert.equal(cond.status, "invalid", JSON.stringify(cond.findings));
+  assert.ok(cond.findings.some((f) => f.code === "pFormulaField" && /showCond/.test(f.message)), JSON.stringify(cond.findings));
+
+  // ループの式そのものも検査する（壊れた式は構文の誤り）
+  const broken = await core.checkConfig(envelope({ ...base, loop: 'IF(顧客コード <> "", 3' }), { pluginZip: ZIP, fields: PROPERTIES });
+  assert.equal(broken.status, "invalid", JSON.stringify(broken.findings));
+  assert.ok(broken.findings.some((f) => /loop/.test(f.message)), JSON.stringify(broken.findings));
+
+  // ループの式で $val は使えない（回数を決める式なので回の値が無い）
+  const selfRef = await core.checkConfig(envelope({ ...base, loop: "$val" }), { pluginZip: ZIP, fields: PROPERTIES });
+  assert.equal(selfRef.status, "invalid", JSON.stringify(selfRef.findings));
+  assert.ok(selfRef.findings.some((f) => f.code === "pFormulaField" && /loop/.test(f.message)), JSON.stringify(selfRef.findings));
+});
+
 test("checkConfig: 項目定義を渡すと項目コードの誤りを error で返す", { skip }, async () => {
   const r = await core.checkConfig(envelope({ showCond: '顧客コード <> ""', execCond: '無い項目 <> ""' }), { pluginZip: ZIP, fields: PROPERTIES });
   assert.equal(r.summary?.formulaCheck ?? "(なし)", "fields");

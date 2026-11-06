@@ -306,6 +306,51 @@ test("checkConfig: 分ける式の構文も見る（保存のときダイアロ�
   assert.ok(r.findings.some((f) => f.code === "pFormulaSyntax" && /groupFormula/.test(f.message)), JSON.stringify(r.findings));
 });
 
+/**
+ * `source: "keys"` の式も検査する（2026-11-06）。本体の `paramRule` は `formula` と `keys` の**両方**を見るので、
+ * tools が `keys` を飛ばすと、壊れた式のまま `kact_save_config` で書けてしまい、
+ * **利用者が取り込んだ設定画面の保存で初めて止まる**（理由が分からない）。
+ */
+test("checkConfig: source: keys の式も構文を見る", { skip }, async () => {
+  const sql = "-- @ksql dialect: 1\nDECLARE @keys = [];\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 顧客コード IN @keys;";
+  const broken = 'IF(顧客コード <> "", "A"'; // 閉じ括弧が無い
+  const r = await core.checkConfig(envelope(formulaAction({
+    params: [{ name: "keys", source: "keys", formula: broken }], sql,
+  })), { pluginZip: ZIP });
+  assert.equal(r.status, "invalid", JSON.stringify(r.findings));
+  assert.ok(r.findings.some((f) => f.code === "pFormulaSyntax" && /keys/.test(f.message)), JSON.stringify(r.findings));
+
+  // 正しい式なら通る（検査を足したことで素の設定が落ちないこと）
+  const ok = await core.checkConfig(envelope(formulaAction({
+    params: [{ name: "keys", source: "keys", formula: "顧客コード" }], sql,
+  })), { pluginZip: ZIP });
+  assert.equal(ok.status, "ok", JSON.stringify(ok.findings));
+});
+
+/**
+ * 無効の行（`enabled: false`）は式を検査しない（2026-11-06）。
+ * 本体は `dialogs.ts` の `structuralProblems` と `paramRule` で外しているので、tools だけが拒むと
+ * **設定画面では保存できる設定が `kact_save_config` で書けない**。「一時的に無効」は作りかけの式を
+ * 置いたままにするための機能（2026-11-05 Takashi）なので、そこを拒むと機能の意味が無くなる。
+ */
+test("checkConfig: 無効のパラメーター・入力項目の式は検査しない", { skip }, async () => {
+  const broken = 'IF(顧客コード <> "", "A"'; // 閉じ括弧が無い
+  const bad = await core.checkConfig(envelope(formulaAction({
+    params: [{ name: "cust", source: "formula", formula: broken }],
+  })), { pluginZip: ZIP });
+  assert.equal(bad.status, "invalid", "有効な行の壊れた式は誤りのまま");
+
+  const offParam = await core.checkConfig(envelope(formulaAction({
+    params: [{ name: "cust", source: "formula", formula: broken, enabled: false }],
+  })), { pluginZip: ZIP });
+  assert.equal(offParam.status, "ok", JSON.stringify(offParam.findings));
+
+  const offInput = await core.checkConfig(envelope(formulaAction({
+    inputs: [{ name: "memo", label: "メモ", type: "text", required: false, defaultFormula: broken, options: [], enabled: false }],
+  })), { pluginZip: ZIP });
+  assert.equal(offInput.status, "ok", JSON.stringify(offInput.findings));
+});
+
 // 引用符を忘れた素の文は警告（2026-10-28 Takashi「警告を足す」。試用 S4 の execNgMessage）
 test("checkConfig: 引用符の無い素の文は警告（保存は止めない）", { skip }, async () => {
   const r = await core.checkConfig(envelope(formulaAction({

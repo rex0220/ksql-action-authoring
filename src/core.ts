@@ -138,22 +138,57 @@ export interface CheckResult {
 }
 
 /** 計算式の口（設定画面の `collectFormulaProblems` と同じ。`where` は利用者に出す名前） */
-function formulaSlots(action: Record<string, unknown>): Array<{ where: string; raw: string; input?: true }> {
-  const slots: Array<{ where: string; raw: string; input?: true }> = [
+/**
+ * 計算式の 1 つの口。`checkFormulas` が**文脈を選ぶ**ために印を持つ。
+ * - `param`: パラメーターの式（`source: "formula"` / `"keys"`）。**ここだけ `$val` / `$lno` が使える**
+ *   （2026-11-06 の Codex レビュー MAJOR 1: 表示条件・実行条件まで許していた）
+ * - `keys`: キーの配列（文脈は常にレコード）
+ * - `input`: 入力の式（レコードが使えるのは詳細画面のボタンだけ）
+ */
+interface FormulaSlot {
+  where: string;
+  raw: string;
+  param?: true;
+  keys?: true;
+  input?: true;
+}
+
+function formulaSlots(action: Record<string, unknown>): Array<FormulaSlot> {
+  const slots: FormulaSlot[] = [
     { where: "showCond（表示条件）", raw: String(action.showCond ?? "") },
     { where: "execCond（実行条件）", raw: String(action.execCond ?? "") },
     { where: "execNgMessage（実行条件 NG のメッセージ）", raw: String(action.execNgMessage ?? "") },
     { where: "groupFormula（分ける式）", raw: String(action.groupFormula ?? "") },
     { where: "resultMessage（結果メッセージ）", raw: String(action.resultMessage ?? "") },
+    /**
+     * **ループの式**（本体の `dialogs.ts` も検査している。2026-11-06 の Codex レビュー MAJOR 2）。
+     * 文脈は起動の形で決まる `base` のままで、**`$val` / `$lno` は足さない**
+     * （回数を決める式そのものなので、回の値は使えない。`loop` の章）
+     */
+    { where: "loop（ループの式）", raw: String(action.loop ?? "") },
   ];
+  /**
+   * **無効の行（`enabled: false`）は検査しない**（本体の `dialogs.ts` の `structuralProblems` と `paramRule` と同じ）。
+   * 無効は「注入しない / 聞かない」だけで行は残る作りで、**作りかけの式を置いたままにできる**のが狙い
+   * （2026-11-05 Takashi「一時的に無効にできるようにして」）。ここで検査すると、設定画面では保存できる設定を
+   * tools だけが拒むことになる（`checkOrFail` がエラーで書き込みを止めるため）
+   */
   for (const p of (Array.isArray(action.params) ? action.params : []) as Array<Record<string, unknown>>) {
-    if (p.source === "formula") slots.push({ where: `params ${String(p.name ?? "")} の式`, raw: String(p.formula ?? "") });
+    if (p.enabled === false) continue;
+    if (p.source === "formula") slots.push({ where: `params ${String(p.name ?? "")} の式`, raw: String(p.formula ?? ""), param: true });
+    /**
+     * **`source: "keys"` の式も検査する**（本体の `paramRule` は `formula` と `keys` の両方を見る）。
+     * 文脈は**常にレコード**（本体の `keysContext`）。キーの配列は「その起動で関係するレコードすべて」に
+     * 式を当てて作るので、アプリ種別や「まとめて 1 回」でもレコードの項目が書ける
+     */
+    if (p.source === "keys") slots.push({ where: `params ${String(p.name ?? "")} の式（キーの配列）`, raw: String(p.formula ?? ""), param: true, keys: true });
   }
   /**
    * 入力の式には `input: true` を付ける。**レコード文脈の規則がほかと違う**ので、
    * `checkFormulas` が文脈を選ぶときに要る（本体の `inputUsesRecord`。2026-11-05 の Codex レビュー MAJOR 5）
    */
   for (const i of (Array.isArray(action.inputs) ? action.inputs : []) as Array<Record<string, unknown>>) {
+    if (i.enabled === false) continue; // 無効の行は検査しない（上の params と同じ）
     const at = `inputs ${String(i.name ?? "")}`;
     slots.push({ where: `${at} の既定値`, raw: String(i.defaultFormula ?? ""), input: true });
     // 選択肢の値とラベルの式（2026-11-05 に本体へ足した。型が選択肢のときだけ効く）
@@ -182,6 +217,13 @@ export interface FormulaContexts {
   record: { pp: unknown; crec: unknown };
   none: { pp: unknown; crec: unknown };
   result: (base: "record" | "none") => { pp: unknown; crec: unknown };
+  /**
+   * **ループのあるアクションのパラメーターの文脈**（`$val` / `$lno` が使える。本体の `formula-check.ts`）。
+   * 2026-11-06 の Codex レビュー MAJOR 3: ここを使っていなかったので、
+   * **ループのアクションで `$val` を使ったパラメーターを tools だけが「無い項目」と拒んでいた**
+   * （`loop` の章が勧める `"formula": "2017 + $val"` がそのまま弾かれる）
+   */
+  loopParam?: (base: "record" | "none") => { pp: unknown; crec: unknown };
 }
 
 /**
@@ -224,14 +266,31 @@ function checkFormulas(engine: Engine, actions: Array<Record<string, unknown>>, 
      * tools が通してしまい、**設定画面の保存で初めて止まる**（利用者には理由が分からない）
      */
     const inputBase: "record" | "none" = action.type === "record" && action.onList !== true ? "record" : "none";
+    /**
+     * **ループのあるアクションは、パラメーターの式で `$val` / `$lno` が使える**（本体の `paramContext` /
+     * `keysContext`。2026-11-06 の Codex レビュー MAJOR 3）。判定は**本体の `hasLoop`**に任せる
+     * （「`loop` がコメントを除いて空でないか」を写すと本物とずれる。API の版 5 で公開した）。
+     * 版 4 までの zip には口が無いので、そのときはこれまでどおりの文脈で見る
+     */
+    const loopApi = (engine.api as { hasLoop?: (a: unknown) => boolean }).hasLoop;
+    const looped = typeof loopApi === "function" && loopApi(action) && typeof contexts?.loopParam === "function";
+    /** パラメーターの文脈（`keys` は常にレコード、ほかは起動の形で決まる `base`） */
+    const paramContext = (keys: boolean): { pp: unknown; crec: unknown } => {
+      const kind: "record" | "none" = keys ? "record" : base;
+      return looped ? contexts!.loopParam!(kind) : contexts![kind];
+    };
     for (const slot of formulaSlots(action)) {
       const context = !contexts
         ? emptyContext
         : slot.where.startsWith("resultMessage")
           ? contexts.result(base)
           : slot.where.startsWith("groupFormula")
-            ? contexts.record // 分ける式はレコードごとに評価する
-            : contexts[slot.input ? inputBase : base];
+            ? contexts.record // 分ける式はレコードごとに評価する（本体の groupContext）
+            : slot.input
+              ? contexts[inputBase] // 入力の式はループ値を使えない（聞くのはループの前に 1 回）
+              : slot.param
+                ? paramContext(slot.keys === true) // パラメーターの式だけ $val / $lno が使える
+                : contexts[base]; // 表示条件・実行条件・NG の文・ループの式はふつうの文脈
       const r = engine.api.checkFormula(context, slot.raw) as { ok: boolean; msg?: string };
       if (r.ok) continue;
       const unknown = UNKNOWN_NAME_RE.exec(r.msg ?? "");

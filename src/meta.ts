@@ -20,7 +20,7 @@ export const KSQL_ACTION_PLUGIN_ID = "afkekkiffjhdkcepekecalklafjhbcmf";
 /** tools が扱う kSQL アクションの版の下限（manifest.json の version。authoring API は Ver.1 から同梱） */
 export const MIN_PLUGIN_VERSION = 1;
 /** tools が対応する authoring API の版（ksql-action の src/authoring/api.ts の AUTHORING_API_VERSION） */
-export const SUPPORTED_API_VERSIONS: readonly number[] = [1, 2, 3, 4];
+export const SUPPORTED_API_VERSIONS: readonly number[] = [1, 2, 3, 4, 5];
 
 /** kSQL アクションの版として扱えるか（整数で MIN_PLUGIN_VERSION 以上） */
 export function isSupportedPluginVersion(version: string): boolean {
@@ -54,11 +54,22 @@ export const API_V4: Record<string, "function"> = {
 };
 
 /**
+ * 版 5 で足したループの判定（計算式の文脈を選ぶのに使う。2026-11-06）。
+ * **写すと本物とずれる**ので本体から公開してもらっている（`loop` がコメントを除いて空でないか）
+ */
+export const API_V5: Record<string, "function"> = { hasLoop: "function" };
+
+/**
  * その版の zip の API に要るキーと型（ksql-action の api.ts の `AUTHORING_API_VERSION` と対）。
  * **古い版の zip も動かす**（足した口を使うツールだけが「zip が古い」と断る）。
+ * **版を名乗る以上その口は揃っていること**を見る（2026-11-06 の Codex レビュー〈2 回目〉MINOR 1。
+ * `apiVersion: 5` と名乗りながら `hasLoop` が無い zip を、黙って古い文脈に落として通していた）
  */
 export function requiredApiFor(apiVersion: number): Record<string, "function" | "object" | "string" | "number"> {
-  return apiVersion >= 4 ? { ...REQUIRED_API, ...API_V4 } : REQUIRED_API;
+  const api = { ...REQUIRED_API };
+  if (apiVersion >= 4) Object.assign(api, API_V4);
+  if (apiVersion >= 5) Object.assign(api, API_V5);
+  return api;
 }
 
 export interface ToolsMeta {
