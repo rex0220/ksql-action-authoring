@@ -48,6 +48,50 @@ function scalarDiffs(a: Obj | undefined, b: Obj | undefined, keys: string[], out
   }
 }
 
+const objList = (v: unknown): Obj[] => (Array.isArray(v) ? v : []).filter((x): x is Obj => !!x && typeof x === "object");
+/** 区分なしは `""` で持つので、そのままだと空に見える */
+const sectionName = (s: unknown): string => (String(s ?? "") === "" ? "（区分なし）" : String(s));
+const joinOrNone = (list: string[]): string => (list.length > 0 ? list.join(", ") : "なし");
+
+/** 画面 × 区分 の 1 行を人が読む形に */
+function viewText(v: Obj | undefined): string {
+  if (!v) return "（無し）";
+  const parts: string[] = [];
+  if (v.enabled === false) parts.push("無効");
+  parts.push(`パネル: ${joinOrNone(Array.isArray(v.sections) ? (v.sections as unknown[]).map(sectionName) : [])}`);
+  parts.push(`メニュー: ${joinOrNone(Array.isArray(v.menus) ? (v.menus as unknown[]).map(sectionName) : [])}`);
+  if (v.open === true) parts.push("開いて出す");
+  return parts.join(" / ");
+}
+
+/**
+ * パネル・区分（`panel`）の差。
+ *
+ * **ここを出さないと、古い控えをそのまま取り込んで区分が消えたことに気づけない**
+ * （取り込みは全置換。`panel` を読むツールは無いので、差分が唯一の手がかり。2026-11-06 の試用 S3）。
+ * 区分は名前の列で、画面ごとの出し方は**一覧 ID で対応付けて**変わった行だけ出す。
+ */
+function panelDiffs(a: Obj | undefined, b: Obj | undefined, out: string[]): void {
+  const pa = (a ?? {}) as Obj;
+  const pb = (b ?? {}) as Obj;
+  scalarDiffs(pa, pb, ["title", "sectionColumns", "buttonWidth", "buttonLogLink"], out, "共通設定 / パネル・区分 / ");
+  const names = (p: Obj): string[] =>
+    objList(p.sections).map((s) => `${sectionName(s.name)}${s.enabled === false ? "（無効）" : ""}`);
+  if (!same(pa.sections, pb.sections)) {
+    out.push(`共通設定 / 区分: ${joinOrNone(names(pa))} → ${joinOrNone(names(pb))}`);
+  }
+  const rows = (p: Obj): Map<string, Obj> => new Map(objList(p.views).map((v) => [String(v.viewId ?? ""), v]));
+  const ra = rows(pa);
+  const rb = rows(pb);
+  for (const id of new Set([...ra.keys(), ...rb.keys()])) {
+    const va = ra.get(id);
+    const vb = rb.get(id);
+    if (same(va, vb)) continue;
+    const label = id === "detail" ? "詳細画面" : id === "*" ? "ほかの一覧すべて" : `一覧 ${id}`;
+    out.push(`共通設定 / 画面ごとの出し方 / ${label}: ${viewText(va)} → ${viewText(vb)}`);
+  }
+}
+
 /** 封筒 2 つを比べて、人が読む差分の文を返す（同じなら空文字） */
 /**
  * アクション 1 つ分の差（`kact_diff` と `kact_update_action` が使う）。
@@ -83,10 +127,12 @@ export function diffConfigs(before: Obj, after: Obj): string {
 
   const a = bodyOf(before);
   const b = bodyOf(after);
-  scalarDiffs(a, b, ["configVersion", "timezone", "pluginComment", "pluginDescription"], out, "共通設定 / ");
+  scalarDiffs(a, b, ["configVersion", "timezone", "progressStyle", "pluginComment", "pluginDescription"], out, "共通設定 / ");
   if (!same(a.bindings, b.bindings)) out.push(`共通設定 / 論理アプリ: ${show(a.bindings)} → ${show(b.bindings)}`);
   if (!same(a.logApp, b.logApp)) out.push(`共通設定 / ログアプリ: ${a.logApp ? "あり" : "無し"} → ${b.logApp ? "あり" : "無し"}`);
-  scalarDiffs(a.limits as Obj | undefined, b.limits as Obj | undefined, ["readMax", "tempTableMax", "tempTotalMax", "timeoutMin", "apiTimeoutSec", "listBulkMax", "applySubtableMax"], out, "共通設定 / 制限 / ");
+  // loopMax / runMax は 2026-11-05 にループと一緒に足した項目。漏れていた（2026-11-06 の試用 S3）
+  scalarDiffs(a.limits as Obj | undefined, b.limits as Obj | undefined, ["readMax", "tempTableMax", "tempTotalMax", "timeoutMin", "apiTimeoutSec", "listBulkMax", "applySubtableMax", "loopMax", "runMax"], out, "共通設定 / 制限 / ");
+  panelDiffs(a.panel as Obj | undefined, b.panel as Obj | undefined, out);
 
   const listA = (Array.isArray(a.actions) ? a.actions : []) as Obj[];
   const listB = (Array.isArray(b.actions) ? b.actions : []) as Obj[];

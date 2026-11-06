@@ -205,6 +205,53 @@ test("diffConfigs: アクションの追加と SQL の行の差分", { skip }, a
   assert.equal(diffConfigs(before, before), "");
 });
 
+// 2026-11-06 の試用 S3: 古い控えをそのまま取り込むと区分が消えるのに、
+// 取り込む前に読む kact_diff が panel を一度も比べていなかった
+test("diffConfigs: パネル・区分（区分の増減と 画面 × 区分 の表）も出す", () => {
+  const sec = (name, over = {}) => ({ enabled: true, name, color: "blue", tone: "soft", collapsed: false, ...over });
+  const panel = (sections, views, over = {}) => ({ title: "", sectionColumns: 1, buttonWidth: 200, buttonLogLink: false, sections, views, ...over });
+  const env = (p) => ({ pluginID: "rex0220 ksql action", appId: 1001, actions: [], panel: p });
+
+  const before = env(panel([sec("注文")], [
+    { viewId: "detail", sections: [], menus: [], open: false },
+    { viewId: "*", sections: ["注文"], menus: [], open: false },
+  ]));
+  const after = env(panel([sec("注文"), sec("保守")], [
+    { viewId: "detail", sections: [], menus: ["保守"], open: false },
+    { viewId: "*", sections: ["注文"], menus: ["保守"], open: true },
+    { viewId: "1102", sections: [], menus: [], open: false, enabled: false },
+  ], { buttonWidth: 120 }));
+
+  const d = diffConfigs(before, after);
+  assert.match(d, /共通設定 \/ 区分: 注文 → 注文, 保守/);
+  assert.match(d, /共通設定 \/ パネル・区分 \/ buttonWidth: 200 → 120/);
+  assert.match(d, /画面ごとの出し方 \/ 詳細画面:/);
+  assert.match(d, /画面ごとの出し方 \/ ほかの一覧すべて:.*開いて出す/);
+  assert.match(d, /画面ごとの出し方 \/ 一覧 1102: （無し） → 無効/);
+  assert.equal(diffConfigs(before, before), "");
+
+  // 無効の区分と「区分なし」も読める形で出す
+  const d2 = diffConfigs(env(panel([sec("注文")], [])), env(panel([sec("注文", { enabled: false })], [])));
+  assert.match(d2, /共通設定 \/ 区分: 注文 → 注文（無効）/);
+  const d3 = diffConfigs(
+    env(panel([sec("注文")], [{ viewId: "*", sections: [""], menus: [], open: false }])),
+    env(panel([sec("注文")], [{ viewId: "*", sections: [], menus: [""], open: false }])),
+  );
+  assert.match(d3, /パネル: （区分なし）/);
+});
+
+// loopMax / runMax は 2026-11-05 にループと一緒に足した項目。差分から漏れていた
+test("diffConfigs: 制限の loopMax / runMax と progressStyle も出す", () => {
+  const env = (over) => ({ pluginID: "rex0220 ksql action", appId: 1001, actions: [], ...over });
+  const d = diffConfigs(
+    env({ limits: { loopMax: 100, runMax: 1000 }, progressStyle: "dialog" }),
+    env({ limits: { loopMax: 10, runMax: 50 }, progressStyle: "spinner" }),
+  );
+  assert.match(d, /制限 \/ loopMax: 100 → 10/);
+  assert.match(d, /制限 \/ runMax: 1000 → 50/);
+  assert.match(d, /共通設定 \/ progressStyle: dialog → spinner/);
+});
+
 // 2026-10-28 の試用 S2 で落ちた形: inputs / params の中のキーを省いて渡す
 test("saveConfig: inputs と params の中のキーも既定値で埋まる（options を書かなくてよい）", { skip }, async () => {
   const withInput = action({
