@@ -382,6 +382,12 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
   // 3 アクションごとの SQL
   const actions = Array.isArray(config.actions) ? (config.actions as Array<Record<string, unknown>>) : [];
   const bindings = (Array.isArray(config.bindings) ? config.bindings : []) as Array<{ name: string; appId: number }>;
+
+  // 2b 区分の名前が定義にあるか（2026-11-06 の試用 S3）。
+  // 一覧は `viewRow.sections.includes(a.panelSection)` で選ぶので、定義に無い区分の
+  // アクションは**どの一覧にも出ない**（詳細画面はボタンとして出る）。設定画面の区分欄は
+  // 選択式なので起きないが、**ファイルから作るときは素通り**して、静かに消える
+  for (const f of unknownSectionFindings(config, actions)) findings.push(f);
   for (const [i, action] of actions.entries()) {
     if (action.enabled === false) continue;
     const r = (await engine.api.checkActionSql(action as never, bindings)) as {
@@ -559,6 +565,60 @@ export async function explainAction(text: string, input: { action: string | numb
     });
   }
   return { status: "ok", action: { index: at + 1, code: String(action.code ?? ""), name: String(action.name ?? "") }, statements, usedApps, findings };
+}
+
+/**
+ * アクションの区分（`panelSection`）が `panel.sections` に**有効な区分として定義されているか**。
+ *
+ * 一覧の起動口は `viewRow.sections` / `viewRow.menus`（どちらも定義済みの区分の名前）との
+ * 突き合わせで選ぶので、**定義に無い名前のアクションはどの一覧にも出ない**。
+ * 詳細画面には（`placements` に `detail_menu` があれば）ボタンとして出るので、
+ * `placements` も空なら**どこにも出ない設定**になる。
+ * 設定画面の区分の欄は選択式なので手では起きないが、**ファイルから作るときは素通りする**
+ * （2026-11-06 の試用 S3 で、存在しない区分「保守」が警告なしで保存できた）。
+ *
+ * 無効（`enabled: false`）の区分は「定義していないのと同じ」（`config` の章）なので同じ扱いにする。
+ */
+export function unknownSectionFindings(
+  config: Record<string, unknown>,
+  actions: Array<Record<string, unknown>>,
+): Finding[] {
+  const panel = config.panel;
+  const defs = panel && typeof panel === "object" && Array.isArray((panel as { sections?: unknown }).sections)
+    ? ((panel as { sections: unknown[] }).sections)
+    : [];
+  const known = new Set(
+    defs
+      .filter((s): s is Record<string, unknown> => !!s && typeof s === "object")
+      .filter((s) => s.enabled !== false)
+      .map((s) => String(s.name ?? "").trim())
+      .filter(Boolean),
+  );
+  const out: Finding[] = [];
+  for (const [i, action] of actions.entries()) {
+    if (action.enabled === false) continue;
+    const name = String(action.panelSection ?? "").trim();
+    if (!name || known.has(name)) continue;
+    const onList = action.type === "app" || action.onList === true;
+    const onDetail = Array.isArray(action.placements) && action.placements.includes("detail_menu");
+    out.push({
+      level: "warning",
+      code: "wUnknownSection",
+      message:
+        `区分「${name}」が共通設定の区分（panel.sections）に有効なものとして定義されていません。`
+        + "一覧の起動口は定義済みの区分としか突き合わせないので、**このアクションはどの一覧にも出ません**"
+        + (onDetail
+          ? "（詳細画面にはボタンとして出ます）。"
+          : onList
+            ? "。`placements` に `detail_menu` も無いので、**どこにも出ません**。"
+            : "。")
+        + " 区分を `panel.sections` に足すか、既にある区分の名前に直してください"
+        + "（区分の追加・名前の確認は設定画面の［パネル・区分］で行います。ツールからは `panel` を読めません）",
+      actionIndex: i + 1,
+      actionCode: String(action.code ?? ""),
+    });
+  }
+  return out;
 }
 
 /**

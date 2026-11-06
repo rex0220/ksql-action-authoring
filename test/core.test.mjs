@@ -146,6 +146,52 @@ test("explainAction: 控えの項目定義だけで実行計画を出す（kinto
   assert.ok(noFields.findings.some((f) => f.code === "fields-missing"), JSON.stringify(noFields.findings));
 });
 
+// 2026-11-06 の試用 S3: 定義に無い区分を指定したアクションが警告なしで保存できた。
+// 一覧は定義済みの区分としか突き合わせないので、どの一覧にも出ない（静かに消える）
+test("checkConfig: 定義に無い区分は警告（保存は止めない）", { skip }, async () => {
+  const withPanel = (sections, over) => ({
+    configVersion: 1, bindings: [{ name: "受注", appId: 1001 }],
+    limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+    timezone: "",
+    panel: {
+      title: "", sectionColumns: 1, buttonWidth: 200, buttonLogLink: false,
+      sections, views: [{ viewId: "*", sections: ["注文"], menus: [], open: false }],
+    },
+    actions: [{
+      enabled: true, code: "mark", name: "印を付ける", description: "", type: "record", onList: true,
+      placements: [], panelSection: "保守", showCond: "", execCond: "", execNgMessage: "",
+      params: [], inputs: [], sql: "-- @ksql dialect: 1\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 処理状況 = '';",
+      staticInsertRows: 0, confirm: true, writeLimit: 10, refreshPrompt: "auto", allowed: [], allowAll: true,
+      resultMessage: "", listOnError: "continue", selectionMode: "once", groupFormula: "", perRecordLock: false, prevRecord: false,
+      ...over,
+    }],
+  });
+  const def = (name) => ({ enabled: true, name, color: "blue", tone: "soft", collapsed: false });
+
+  const r = await core.checkConfig(envelope(withPanel([def("注文")])), { pluginZip: ZIP });
+  assert.equal(r.status, "ok", "警告なので保存は止めない");
+  const w = r.findings.find((f) => f.code === "wUnknownSection");
+  assert.ok(w, JSON.stringify(r.findings));
+  assert.equal(w.level, "warning");
+  assert.equal(w.actionCode, "mark");
+  assert.match(w.message, /保守/);
+  assert.match(w.message, /どこにも出ません/, "detail_menu も無いときは「どこにも出ない」と言う");
+
+  // 定義してあれば出さない
+  const ok = await core.checkConfig(envelope(withPanel([def("注文"), def("保守")])), { pluginZip: ZIP });
+  assert.equal(ok.findings.filter((f) => f.code === "wUnknownSection").length, 0, JSON.stringify(ok.findings));
+
+  // 無効の区分は「定義していないのと同じ」
+  const offSection = await core.checkConfig(envelope(withPanel([def("注文"), { ...def("保守"), enabled: false }])), { pluginZip: ZIP });
+  assert.ok(offSection.findings.some((f) => f.code === "wUnknownSection"), JSON.stringify(offSection.findings));
+
+  // 詳細画面には出るので、そう言う
+  const onDetail = await core.checkConfig(envelope(withPanel([def("注文")], { placements: ["detail_menu"] })), { pluginZip: ZIP });
+  const w2 = onDetail.findings.find((f) => f.code === "wUnknownSection");
+  assert.ok(w2, JSON.stringify(onDetail.findings));
+  assert.match(w2.message, /詳細画面にはボタンとして出ます/);
+});
+
 // 2026-11-06 の試用 S1: 推奨の標準形（キーの配列）がいつも FULL_SCAN・constant false に見え、
 // 「条件が効かず全件に当たる」を見つけるための計画が、その判定に使えなかった
 test("arrayDeclareNames: 配列で宣言した変数を拾う（コメントは見ない）", () => {
