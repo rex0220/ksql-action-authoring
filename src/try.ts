@@ -34,7 +34,7 @@ export interface TryInput {
   context?: "record" | "none";
   /** 架空の値（項目コード → 値。テーブルは行の配列）。書かない項目は空 */
   data?: Record<string, unknown>;
-  /** 結果メッセージを試すときの `_result_*` の値（これを渡すと `_result_*` が使える文脈になる） */
+  /** 結果メッセージを試すときの `$result_*` の値（これを渡すと `$result_*` が使える文脈になる） */
   result?: Record<string, string | number>;
   /**
    * ループの 1 回ぶん（§5.7）。渡すと**パラメーターの式で `$val` / `$lno` が使える**文脈になる。
@@ -73,7 +73,7 @@ export interface TryResult {
   context?: "record" | "none";
   /** 項目定義の控え（作業フォルダーからの相対パス） */
   fieldsFrom?: string;
-  /** `_result_*` を足した文脈か */
+  /** `$result_*` を足した文脈か */
   withResult?: boolean;
   /** `$val` / `$lno` を足した文脈か（渡された回の値をそのまま返す） */
   loop?: { val: string | number; lno: number };
@@ -249,7 +249,7 @@ export async function tryFormulas(input: TryInput, opt: LoadEngineOptions & { wo
     base = record;
   }
 
-  // 結果メッセージの文脈（_result_* を足す）。足すのは本体の withResultRecord
+  // 結果メッセージの文脈（$result_* を足す）。足すのは本体の withResultRecord
   const withResult = !!input.result;
   if (input.result) {
     const r = evalApi.withResultRecord(pp, base, input.result);

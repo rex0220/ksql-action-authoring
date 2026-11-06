@@ -98,8 +98,8 @@ test("kact_try: テーブルの行を渡せる（SUM は文字列で返る）", 
   assert.equal(v.param, "350");
 });
 
-test("kact_try: result を渡すと _result_* が使える", { skip }, async () => {
-  const r = await tryFormulas({ app: 1001, result: { _result_updated: 4, _result_status: "success" }, formulas: [{ formula: '"updated=" & _result_updated' }] }, opt);
+test("kact_try: result を渡すと $result_* が使える", { skip }, async () => {
+  const r = await tryFormulas({ app: 1001, result: { $result_updated: 4, $result_status: "success" }, formulas: [{ formula: '"updated=" & $result_updated' }] }, opt);
   assert.equal(r.withResult, true);
   assert.equal(one(r).value, "updated=4");
 });

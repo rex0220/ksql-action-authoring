@@ -71,8 +71,8 @@
 ログ（任意のログアプリ）には回の内訳が残ります（`loopRuns` / `loopOk` / `loopFailed` / `loopSkipped` / `loopUnprocessed`。
 **ループ値そのものは書きません**）。`loopRuns` は**展開した総回数**で、`ok + failed + skipped + unprocessed` と必ず一致します。
 
-結果メッセージでは回の数を `_result_runs` / `_result_ok_runs` / `_result_failed_runs` / `_result_skipped` で使えます
-（**ループありのアクションだけ**。既存の `_result_ok` などは**対象（レコード / グループ）の単位のまま**です）。
+結果メッセージでは回の数を `$result_runs` / `$result_ok_runs` / `$result_failed_runs` / `$result_skipped` で使えます
+（**ループありのアクションだけ**。既存の `$result_ok` などは**対象（レコード / グループ）の単位のまま**です）。
 
 ## 必ず守ること: ループ値を `WHERE` に入れる
 

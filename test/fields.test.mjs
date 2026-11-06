@@ -334,7 +334,7 @@ test("checkConfig: 項目定義を渡すと項目コードの誤りを error で
 });
 
 test("checkConfig: 項目定義があれば正しい式は ok（テーブルの子も使える）", { skip }, async () => {
-  const r = await core.checkConfig(envelope({ showCond: '顧客コード <> ""', resultMessage: '"書き込み " & _result_total & " 件"' }), { pluginZip: ZIP, fields: PROPERTIES });
+  const r = await core.checkConfig(envelope({ showCond: '顧客コード <> ""', resultMessage: '"書き込み " & $result_total & " 件"' }), { pluginZip: ZIP, fields: PROPERTIES });
   assert.equal(r.status, "ok", JSON.stringify(r.findings));
   assert.equal(r.summary.formulaCheck, "fields");
 });

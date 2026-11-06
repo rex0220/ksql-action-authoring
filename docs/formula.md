@@ -11,7 +11,7 @@
 | `params[].formula`（`source: "formula"`） | 押したとき（結果を SQL に注入） | 同上 |
 | `params[].formula`（`source: "keys"`。キーの配列） | その起動で**関係するレコードごと** | レコードの値。**アプリ種別や「まとめて 1 回」でも項目が書けます**（レコードごとに当てるため） |
 | `inputs[].defaultFormula`（入力の既定値）・`optionsFormula` / `optionLabelsFormula`（選択肢の値・ラベル） | 入力ダイアログを出すとき（1 回） | `LOGIN_INFO`・`EV_INFO`・日付計算。**レコードの値は詳細画面のボタンだけ**（下） |
-| `resultMessage`（結果メッセージ） | 実行の後 | 上記 + **`_result_*`** |
+| `resultMessage`（結果メッセージ） | 実行の後 | 上記 + **`$result_*`** |
 | `groupFormula`（分ける式） | 選んだ**レコードごと** | レコードの値（`selection`） |
 | `loop`（ループの式） | 押したとき（回数を決める。`loop`） | レコードの値（起動の形による）。**`$val` / `$lno` は使えない** |
 
@@ -67,7 +67,7 @@
 
 - **1 回に 10 式まで**（探索を続けない）。式ごとに独立に評価します（1 つの誤りがほかを止めない）。
 - `app` を省くと**項目の無い文脈**（種類 app・「まとめて 1 回」・「グループごと」と同じ）。項目を参照すると誤りになります。
-- `result`（`{ "_result_updated": 4 }` など）を渡すと、**結果メッセージの文脈**（`_result_*` が使える）になります。
+- `result`（`{ "$result_updated": 4 }` など）を渡すと、**結果メッセージの文脈**（`$result_*` が使える）になります。
 - `loop`（`{ "val": 2017, "lno": 0 }`）を渡すと、**ループのパラメーターの文脈**（`$val` / `$lno` が使える）になります。
   **`$val` は渡した型のまま**なので、`2017 + $val` を数で試せば足し算、文字列で試せば連結になります（`loop` の章）。
 - `user`（`{ "code": "demo_user01" }`）を渡すと `LOGIN_INFO` が効きます。
@@ -133,12 +133,12 @@
 
 | 変数 | 値 |
 |---|---|
-| `_result_status` | `success` / `partial`（一部失敗・途中停止）/ `failed` / `cancelled`（断った・中止・上限超過）/ `timeout` |
-| `_result_inserted` / `_result_updated` / `_result_deleted` | 実績の件数（`UPSERT` は分けられない分を updated に数える） |
-| `_result_total` | 実績の合計 |
-| `_result_planned` | 確認に出した予定の合計（実績と違うことがある） |
-| `_result_ms` | 経過ミリ秒 |
-| `_result_ok` / `_result_failed` / `_result_unprocessed` | 一覧のレコード数（成功 / 失敗 / 未処理）。一覧以外は 0 |
+| `$result_status` | `success` / `partial`（一部失敗・途中停止）/ `failed` / `cancelled`（断った・中止・上限超過）/ `timeout` |
+| `$result_inserted` / `$result_updated` / `$result_deleted` | 実績の件数（`UPSERT` は分けられない分を updated に数える） |
+| `$result_total` | 実績の合計 |
+| `$result_planned` | 確認に出した予定の合計（実績と違うことがある） |
+| `$result_ms` | 経過ミリ秒 |
+| `$result_ok` / `$result_failed` / `$result_unprocessed` | 一覧のレコード数（成功 / 失敗 / 未処理）。一覧以外は 0 |
 
 ## よく使う式
 
@@ -151,7 +151,7 @@
 | **条件を 2 つ以上そろえる**（かつ） | `AND(顧客コード <> "", 処理状況 <> "締め済み")` |
 | **どちらかでよい**（または） | `OR(処理状況 = "未処理", 処理状況 = "")` |
 | **理由で文面を変える**（NG メッセージ） | `IF(処理状況 = "締め済み", "締め済みのため実行できません", "顧客コードを入れてください")` |
-| 結果メッセージ | `"集計しました（" & _result_updated & " 件）"` |
+| 結果メッセージ | `"集計しました（" & $result_updated & " 件）"` |
 | 追加の保存のときだけ実行 | `EV_INFO("cate") = "create"` |
 
 - **実行条件は 1 つの口に 1 本**です。条件が複数あるときは `AND(…)` / `OR(…)` でまとめます

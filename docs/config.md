@@ -118,7 +118,7 @@
 | `allowed` | `[{ type, code, name? }]` | `type` は `USER` / `GROUP` / `ORGANIZATION`。空 = 全員。**誤操作防止**で、セキュリティ境界ではない |
 | `allowAll` | 真偽 | `true` なら `allowed` を見ずに全員（`allowed` は消さずに残す）。既定 `true` |
 | `refreshPrompt` | `"auto"` / `"always"` / `"never"` | 完了のダイアログに［この画面を更新］を出すか。`auto` = このアプリに書いたときだけ |
-| `resultMessage` | 計算式 | `_result_*` が使える（`formula`）。空 = 既定の文 |
+| `resultMessage` | 計算式 | `$result_*` が使える（`formula`）。空 = 既定の文 |
 | `listOnError` | `"continue"` / `"stop"` | 一覧の 1 件ずつのときだけ効く |
 | `eventLog` | `"failed"` / `"all"` / `"none"` | **イベント起動のときだけ**ログアプリに何を残すか。既定は `"failed"`（失敗だけ）。イベントは何度も起きるので、`"all"` にするとログが膨らみます（1 日 100 件の更新で年に数万件）。**ボタンと一覧の一括には効きません**（記録が二重実行を止める仕組みなので省けない） |
 | `selectionMode` | `"loop"` / `"once"` / `"group"` | 一覧で選んだレコードの渡し方（`selection`）。**`onList: true` のときだけ効く** |

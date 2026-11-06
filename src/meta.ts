@@ -20,7 +20,7 @@ export const KSQL_ACTION_PLUGIN_ID = "afkekkiffjhdkcepekecalklafjhbcmf";
 /** tools が扱う kSQL アクションの版の下限（manifest.json の version。authoring API は Ver.1 から同梱） */
 export const MIN_PLUGIN_VERSION = 1;
 /** tools が対応する authoring API の版（ksql-action の src/authoring/api.ts の AUTHORING_API_VERSION） */
-export const SUPPORTED_API_VERSIONS: readonly number[] = [1, 2, 3, 4, 5];
+export const SUPPORTED_API_VERSIONS: readonly number[] = [1, 2, 3, 4, 5, 6];
 
 /** kSQL アクションの版として扱えるか（整数で MIN_PLUGIN_VERSION 以上） */
 export function isSupportedPluginVersion(version: string): boolean {
@@ -58,6 +58,12 @@ export const API_V4: Record<string, "function"> = {
  * **写すと本物とずれる**ので本体から公開してもらっている（`loop` がコメントを除いて空でないか）
  */
 export const API_V5: Record<string, "function"> = { hasLoop: "function" };
+
+/**
+ * 版 6（2026-11-06）で足した口は**無い**。結果の変数の接頭辞が
+ * `_result_` → `$result_` に変わっただけ（tools が案内する名前が変わるので版を上げた）。
+ * 要るキーは版 5 と同じ。
+ */
 
 /**
  * その版の zip の API に要るキーと型（ksql-action の api.ts の `AUTHORING_API_VERSION` と対）。

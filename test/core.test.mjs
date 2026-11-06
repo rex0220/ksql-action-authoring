@@ -420,7 +420,7 @@ const formulaAction = (over) => ({
 
 test("checkConfig: 式の構文が通らなければ invalid（口の名前だけ出し、式は出さない）", { skip }, async () => {
   // 先頭の " が落ちた結果メッセージ（S3 で実際に書かれた形）
-  const broken = 'この顧客を集計しました（書き込み " & _result_total & " 件）';
+  const broken = 'この顧客を集計しました（書き込み " & $result_total & " 件）';
   const r = await core.checkConfig(envelope(formulaAction({ resultMessage: broken })), { pluginZip: ZIP });
   assert.equal(r.status, "invalid", JSON.stringify(r.findings));
   const f = r.findings.find((x) => x.code === "pFormulaSyntax");
@@ -434,7 +434,7 @@ test("checkConfig: 項目名・関数名は構文の検査で誤りにしない�
   const r = await core.checkConfig(envelope(formulaAction({
     showCond: '処理状況 <> "済"',
     execCond: 'LEN(顧客コード) > 0',
-    resultMessage: '"書き込み " & _result_total & " 件"',
+    resultMessage: '"書き込み " & $result_total & " 件"',
   })), { pluginZip: ZIP });
   assert.equal(r.status, "ok", JSON.stringify(r.findings));
 });
@@ -511,7 +511,7 @@ test("checkConfig: 本物の項目コードは警告にしない（項目定義�
   const r = await core.checkConfig(envelope(formulaAction({
     showCond: "処理状況",
     execCond: "顧客コード <> \"\"",
-    resultMessage: '"書き込み " & _result_total & " 件"',
+    resultMessage: '"書き込み " & $result_total & " 件"',
   })), { pluginZip: ZIP });
   assert.equal(r.status, "ok", JSON.stringify(r.findings));
   assert.equal(r.findings.length, 0, JSON.stringify(r.findings));
