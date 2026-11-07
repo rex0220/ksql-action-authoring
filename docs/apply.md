@@ -30,6 +30,26 @@ UPDATE LAPP_集計 SET 集計日時 = @NOW()
 - 親のキーは **「値の重複を禁止する」** にしてください。そうでないと検査に注意 `KSQL1307`
   （親の `WHERE` が 1 件に決まると読めない）が出ます。保存は止まりませんが、重複したときは実行時に止まります。
 - **ソースの `SELECT` では as-of 関数が使えます**（`WHERE 受注日 >= @TODAY()`）。
+- **親の `SET` の右辺に、ほかのアプリを読むサブクエリは書けません。**
+  `SET` の右辺の項目参照は、**サブクエリの中まで含めて「親アプリの項目」として**確かめられるので、
+  `SET 件数 = (SELECT COUNT(*) FROM LAPP_受注 …)` は
+  **`APPLY parent reference 金額 is not a top-level field.` で落ちます**
+  （**保存は通ってしまいます**。`kact_explain` で先に見つかります）。
+  合計を親にも入れるなら、**先に `SET` で変数に取ってから**渡します:
+
+  ```sql
+  SET @cnt = (SELECT COUNT(*) FROM LAPP_受注 WHERE $id IN @_selected);
+  SET @amt = (SELECT SUM(金額) FROM LAPP_受注 WHERE $id IN @_selected);
+
+  UPDATE LAPP_集計 SET 件数 = @cnt, 売上 = @amt, 集計日時 = @NOW()
+   WHERE 顧客コード = @_group
+   APPLY 明細 ( REMOVE ALL ROWS; APPEND (…) SELECT … );
+  ```
+
+  **`SET` は宣言を兼ねる**ので `DECLARE` は書きません（両方書くと「`SET` だけにしてください」で保存できません）。
+  `SET` で作った変数は注入される値ではないので、**`params` の行も要りません**。
+- **`APPLY` の対象のテーブルを、親の `SET` でも書くことはできません**
+  （`APPLY target 明細 is also assigned by parent SET.`）。
 - 並び順は `SUM(…) AS 別名` + `ORDER BY 別名`。テーブルの行はその順に入ります。
 - **子行の上限**は共通設定の `applySubtableMax`（既定 500）。**`REMOVE ALL ROWS` で消える既存行も数えます**（1 文の合計）。
 - 確認ダイアログには**子行の数**（足す行 / 消す行）と、戻せない操作である注意が出ます。

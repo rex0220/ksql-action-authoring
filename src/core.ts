@@ -402,6 +402,9 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
   // `wUnknownSection` は「定義に無い区分」だけを見るので、区分なしと
   // 「定義済みだが どの一覧にも載せていない」は素通りしていた
   for (const f of nowhereShownFindings(config, actions)) findings.push(f);
+  // 2d 一覧の「1 件ずつ」のままテーブルを全置換している（2026-11-07 の試用 S5）。
+  // 既定が "loop" なので、渡し方を書き忘れただけでこの形になる
+  for (const f of listApplyLoopFindings(actions)) findings.push(f);
   /**
    * 控えの項目定義から作る client（API 版 3 の `createFieldsClient`）。**通信しない**（手元の
    * `properties` を返すだけ）。これを `checkActionSql` に渡すと、選択肢の定義に無い値
@@ -739,6 +742,52 @@ export function nowhereShownFindings(
         `${where}のアクションですが、\`panel.views\` のどの一覧の行にも載っていないので`
         + "**どの一覧にも出ません**。`placements` に `detail_menu` もイベントも無いので、**どこにも出ません**。"
         + `${fix}（\`sections: []\` は「この一覧には何も出さない」で、「ぜんぶ出す」ではありません）`,
+      actionIndex: i + 1,
+      actionCode: String(action.code ?? ""),
+    });
+  }
+  return out;
+}
+
+/** 行コメント（`--` から行末）を外した SQL。語の有無で判定するときに使う */
+function sqlWithoutComments(sql: string): string {
+  return sql.split(/\r?\n/).map((line) => line.replace(/--.*$/, "")).join("\n");
+}
+
+/**
+ * 一覧の渡し方が「1 件ずつ」のまま、テーブルを全置換する `APPLY` を書いている
+ * （2026-11-07 の試用 S5）。
+ *
+ * `REMOVE ALL ROWS; APPEND … SELECT` は**全置換**なので、1 件ずつ回すと
+ * **後のレコードが前のレコードで入れた行を消す**。選んだレコードの親が全部違えば結果は正しいが、
+ * **同じ親のものが 2 件以上あると最後の 1 件ぶんしか残らない**（`apply` の章が
+ * 「『1 件ずつ』では成立しません」と書いている形そのもの）。
+ *
+ * ループ（`loop`）の同じ罠には `wLoopWriteNoFilter` という手がかりがあるのに、
+ * **一覧の「1 件ずつ」には何も無かった**。しかも `selectionMode` の**既定が `"loop"`** なので、
+ * 書き忘れただけでこの形になる（ループは `loop` を自分で書かないと起きない）。
+ * 結果だけが静かに間違うので注意を出す（保存は止めない）。
+ */
+export function listApplyLoopFindings(actions: Array<Record<string, unknown>>): Finding[] {
+  const out: Finding[] = [];
+  for (const [i, action] of actions.entries()) {
+    if (action.enabled === false) continue;
+    if (action.onList !== true) continue;
+    // 書かないときの既定が「1 件ずつ」
+    if (String(action.selectionMode ?? "loop") !== "loop") continue;
+    const sql = sqlWithoutComments(String(action.sql ?? ""));
+    if (!/\bAPPLY\b/i.test(sql) || !/\bREMOVE\s+ALL\s+ROWS\b/i.test(sql)) continue;
+    out.push({
+      level: "warning",
+      code: "wListApplyLoop",
+      message:
+        "一覧の渡し方が「1 件ずつ」（`selectionMode: \"loop\"`。**書かないときの既定**）のまま、"
+        + "テーブルを全置換する `APPLY`（`REMOVE ALL ROWS`）を書いています。"
+        + "選んだレコードに**同じ親のものが 2 件以上**あると、後のレコードが前のレコードで入れた行を消すので、"
+        + "**最後の 1 件ぶんしか残りません**。"
+        + "顧客ごと・部門ごとに分けるなら「グループごと」（`selectionMode: \"group\"` ＋ `groupFormula`）、"
+        + "選んだ分をまとめて 1 つの親に入れるなら「まとめて 1 回」（`\"once\"`）にしてください"
+        + "（`kact_docs` の section selection・apply）",
       actionIndex: i + 1,
       actionCode: String(action.code ?? ""),
     });

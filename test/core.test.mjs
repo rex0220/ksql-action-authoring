@@ -516,3 +516,57 @@ test("checkConfig: 本物の項目コードは警告にしない（項目定義�
   assert.equal(r.status, "ok", JSON.stringify(r.findings));
   assert.equal(r.findings.length, 0, JSON.stringify(r.findings));
 });
+
+// 2026-11-07 の試用 S5: 一覧の渡し方が「1 件ずつ」のままテーブルを全置換する APPLY を
+// 書くと、同じ親のレコードを 2 件以上選んだときに最後の 1 件ぶんしか残らない。
+// 資料は「『1 件ずつ』では成立しません」と書いているのに、検査は何も言わなかった。
+// しかも selectionMode の既定が "loop" なので、書き忘れただけでこの形になる
+test("checkConfig: 一覧の「1 件ずつ」＋ テーブルの全置換は警告（保存は止めない）", { skip }, async () => {
+  const applySql = "-- @ksql dialect: 1\nDECLARE @cust = '';\n"
+    + "UPDATE LAPP_集計 SET 集計日時 = @NOW()\n WHERE 顧客コード = @cust\n APPLY 明細 (\n"
+    + "   REMOVE ALL ROWS;\n   APPEND (担当者) SELECT 担当者 FROM LAPP_受注 WHERE 顧客コード = @cust GROUP BY 担当者\n );";
+  const build = (over) => envelope({
+    configVersion: 1, bindings: [{ name: "受注", appId: 1001 }, { name: "集計", appId: 1002 }],
+    limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+    timezone: "",
+    panel: { title: "", sectionColumns: 1, buttonWidth: 200, buttonLogLink: false, sections: [], views: [{ viewId: "*", sections: [""], menus: [], open: false }] },
+    actions: [{
+      enabled: true, code: "appl", name: "明細へ", description: "", type: "record", onList: true,
+      placements: [], panelSection: "", showCond: "", execCond: "", execNgMessage: "",
+      params: [{ name: "cust", source: "formula", formula: "顧客コード" }], inputs: [], sql: applySql,
+      staticInsertRows: 0, confirm: true, writeLimit: 10, refreshPrompt: "auto", allowed: [], allowAll: true,
+      resultMessage: "", listOnError: "continue", groupFormula: "", perRecordLock: false, prevRecord: false,
+      ...over,
+    }],
+  });
+
+  // selectionMode を書いていない（既定の「1 件ずつ」）→ 警告
+  const def = await core.checkConfig(build({}), { pluginZip: ZIP });
+  assert.equal(def.status, "ok", "警告なので保存は止めない");
+  const w = def.findings.find((f) => f.code === "wListApplyLoop");
+  assert.ok(w, JSON.stringify(def.findings));
+  assert.equal(w.actionCode, "appl");
+  assert.match(w.message, /最後の 1 件ぶんしか残りません/);
+
+  // はっきり "loop" と書いても同じ
+  const loop = await core.checkConfig(build({ selectionMode: "loop" }), { pluginZip: ZIP });
+  assert.ok(loop.findings.some((f) => f.code === "wListApplyLoop"), JSON.stringify(loop.findings));
+
+  // 「グループごと」「まとめて 1 回」なら出さない
+  for (const mode of ["group", "once"]) {
+    const r = await core.checkConfig(build({ selectionMode: mode, groupFormula: mode === "group" ? "顧客コード" : "" }), { pluginZip: ZIP });
+    assert.equal(r.findings.filter((f) => f.code === "wListApplyLoop").length, 0, `${mode}: ${JSON.stringify(r.findings)}`);
+  }
+
+  // 詳細画面のボタン（一覧で使わない）は 1 件 = 1 つの親なので出さない
+  const detail = await core.checkConfig(build({ onList: false, placements: ["detail_menu"] }), { pluginZip: ZIP });
+  assert.equal(detail.findings.filter((f) => f.code === "wListApplyLoop").length, 0, JSON.stringify(detail.findings));
+
+  // APPLY が無ければ出さない
+  const noApply = await core.checkConfig(build({ sql: "-- @ksql dialect: 1\nDECLARE @cust = '';\nUPDATE LAPP_集計 SET 集計日時 = @NOW() WHERE 顧客コード = @cust;" }), { pluginZip: ZIP });
+  assert.equal(noApply.findings.filter((f) => f.code === "wListApplyLoop").length, 0, JSON.stringify(noApply.findings));
+
+  // コメントの中の APPLY は拾わない
+  const commented = await core.checkConfig(build({ sql: "-- @ksql dialect: 1\n-- APPLY 明細 ( REMOVE ALL ROWS; )\nDECLARE @cust = '';\nUPDATE LAPP_集計 SET 集計日時 = @NOW() WHERE 顧客コード = @cust;" }), { pluginZip: ZIP });
+  assert.equal(commented.findings.filter((f) => f.code === "wListApplyLoop").length, 0, JSON.stringify(commented.findings));
+});

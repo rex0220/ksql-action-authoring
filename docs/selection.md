@@ -40,9 +40,15 @@
 ### 例（顧客ごとに、顧客マスタのテーブルへ明細を入れる）
 
 ```json
-{ "type": "list", "selectionMode": "group", "groupFormula": "顧客コード",
-  "params": [{ "name": "cust", "source": "formula", "formula": "" }] }
+{ "type": "record", "onList": true, "placements": [],
+  "selectionMode": "group", "groupFormula": "顧客コード",
+  "params": [] }
 ```
+
+下の SQL が宣言しているのは **`@_selected` と `@_group` だけ**で、どちらも**予約名**なので
+`params` の行は要りません（**`params` に `_group` を書くと `action[n]:param:reserved:_group` で保存できません**）。
+`params` に書くのは、**SQL に `DECLARE` がある予約名以外の変数**だけです
+（余った行は `pDeclareMissing` で保存できません）。
 
 分ける式の値は `_group` に入るので、SQL では `@_group` を親の `WHERE` に使います（`params` に書くのは `_group` 以外の値だけ）。
 
