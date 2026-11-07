@@ -109,6 +109,12 @@ profile で弾くと、**設定画面がいちばん止めたい形**（通常�
   **真偽の判定（`"0"` / `"false"` / 空は偽）と数値の文字列化を tools に写さない**。写すと本物とずれ、
   `kact_try` で確かめたい動きそのものが嘘になる（2026-11-03。選択式ルックアップテーブル Ver.15 の退行と同じ罠）。
 - 文脈（`pp` / `crec`）は本体の `loadFormulaContext` が作る（`core.ts` の `contextsFrom`）。**値だけ**を `src/try.ts` が差し込む。
+- **口ごとの文脈は `kact_check` と同じ `contextForSlot`（`core.ts`）を呼ぶ**（2026-11-07。Codex レビュー #4）。
+  `src/try.ts` に「どの口で何が使えるか」の表を 2 つめ作らない。作ると
+  **`kact_try` では通るのに `kact_check` が拒む**式（またはその逆）ができる。
+  値を差し込むのも**その文脈に擬似項目があるものだけ**（`withResultRecord` は何でも足せてしまう）。
+- **共通の文（`$m_…`）の値は本体の口で作る**: `messageValues`（版 7）＋ `withResultRecord`（版 4）。
+  実行時の `withMessageRecord` の中身がこの 2 つなので、**版を上げずに同じ値になる**。文も判定も写さない。
 - `src/kintone-global.d.ts` は、本体の `formula-run.ts` が使う `kintone` グローバルの**型の解決のためだけ**に置いてある
   （tools は `kintone` を呼ばない。評価の関数は `pp` と `record` を引数で受ける）。
 

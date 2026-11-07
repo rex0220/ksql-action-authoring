@@ -214,3 +214,117 @@ test("kact_try: data は項目の無い文脈では使えない", { skip }, asyn
   const r = await tryFormulas({ context: "none", data: { 担当: "佐藤" }, formulas: [{ formula: '"a"' }] }, opt);
   assert.equal(r.status, "invalid");
 });
+
+/**
+ * 共通の文（`$m_…`）の試し計算（2026-11-07 の Codex レビュー #4）。
+ *
+ * それまでは `contextsFrom` に `messages` を渡しておらず、**`messages` に正しく定義した文まで
+ * 「無い項目」**になっていた（`kact_check` 側は 0.11.1 で直したが、`kact_try` に残っていた）。
+ *
+ * 値の作り方は実行時と同じ（本体の `messageValues`〈版 7〉＋ `withResultRecord`〈版 4〉。
+ * 実行時の `withMessageRecord` の中身がこの 2 つ）。**判定も文も tools に写さない**。
+ *
+ * **口（`slot`）を見る**のが肝: `$m_…` を書けるのは 3 つの口だけなので、無条件に入れると
+ * 「`kact_try` では通るのに `kact_check` が拒む」式を作れてしまう（今の不具合の裏返し）。
+ */
+const CONFIG_WITH_MESSAGES = JSON.stringify({
+  date: "2026-11-07 00:00",
+  pluginName: "kSQL アクション",
+  pluginID: "rex0220 ksql action",
+  PluginVersion: "1",
+  appId: 1001,
+  appName: "受注",
+  configVersion: 1,
+  bindings: [{ name: "受注", appId: 1001 }],
+  messages: [
+    { code: "m_done", text: "{n} 件を書き込みました", text_en: "Wrote {n} records" },
+    { code: "m_no_amount", text: "金額が空です" },
+  ],
+  limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+  timezone: "",
+  actions: [],
+});
+writeFileSync(join(ws, "with-messages.json"), CONFIG_WITH_MESSAGES);
+
+test("kact_try: file を渡すと共通の文（$m_…）を試せる", { skip }, async () => {
+  const r = await tryFormulas(
+    { app: 1001, file: "with-messages.json", formulas: [{ formula: "$m_done", slot: "resultMessage" }] },
+    opt,
+  );
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  assert.equal(r.messages, 2);
+  assert.equal(r.results[0].ok, true, JSON.stringify(r.results[0]));
+  assert.equal(r.results[0].value, "{n} 件を書き込みました");
+});
+
+test("kact_try: 共通の文は lang で切り替わる", { skip }, async () => {
+  const r = await tryFormulas(
+    { app: 1001, file: "with-messages.json", lang: "en", formulas: [{ formula: "$m_done", slot: "resultMessage" }] },
+    opt,
+  );
+  assert.equal(r.results[0].value, "Wrote {n} records");
+  // 英語の文が無い文は既定の文に落ちる（本体の messageTexts と同じ）
+  const fallback = await tryFormulas(
+    { app: 1001, file: "with-messages.json", lang: "en", formulas: [{ formula: "$m_no_amount", slot: "execNgMessage" }] },
+    opt,
+  );
+  assert.equal(fallback.results[0].value, "金額が空です");
+});
+
+test("kact_try: $m_… を書けない口では「無い項目」になる（kact_check と同じ）", { skip }, async () => {
+  const r = await tryFormulas(
+    { app: 1001, file: "with-messages.json", formulas: [{ formula: "$m_done", slot: "showCond" }] },
+    opt,
+  );
+  assert.equal(r.results[0].ok, false, "表示条件に共通の文は書けない");
+  // 黙って落とさず、どこなら書けるかを言う
+  const w = r.findings.find((f) => f.code === "slot-not-allowed");
+  assert.ok(w, JSON.stringify(r.findings));
+  assert.match(w.message, /execNgMessage/);
+});
+
+test("kact_try: slot を書かない式には共通の文を入れない（知らせる）", { skip }, async () => {
+  const r = await tryFormulas(
+    { app: 1001, file: "with-messages.json", formulas: [{ formula: "$m_done" }] },
+    opt,
+  );
+  assert.equal(r.results[0].ok, false);
+  assert.ok(r.findings.some((f) => f.code === "slot-missing"), JSON.stringify(r.findings));
+});
+
+test("kact_try: slot は $result_* と $val の口も分ける", { skip }, async () => {
+  // $result_* は結果メッセージだけ
+  const okResult = await tryFormulas(
+    { app: 1001, result: { $result_updated: 4 }, formulas: [{ formula: '"更新 " & $result_updated', slot: "resultMessage" }] },
+    opt,
+  );
+  assert.equal(okResult.results[0].value, "更新 4", JSON.stringify(okResult.findings));
+  const ngResult = await tryFormulas(
+    { app: 1001, result: { $result_updated: 4 }, formulas: [{ formula: "$result_updated", slot: "execCond" }] },
+    opt,
+  );
+  assert.equal(ngResult.results[0].ok, false, "実行条件に $result_* は書けない");
+  assert.ok(ngResult.findings.some((f) => f.code === "slot-not-allowed"), JSON.stringify(ngResult.findings));
+
+  // $val / $lno はパラメーターの式だけ
+  const okLoop = await tryFormulas(
+    { app: 1001, loop: { val: 2017, lno: 0 }, formulas: [{ formula: "2017 + $val", as: "param", slot: "param" }] },
+    opt,
+  );
+  assert.equal(okLoop.results[0].param, "4034", JSON.stringify(okLoop.findings));
+  const ngLoop = await tryFormulas(
+    { app: 1001, loop: { val: 2017, lno: 0 }, formulas: [{ formula: "$val", slot: "showCond" }] },
+    opt,
+  );
+  assert.equal(ngLoop.results[0].ok, false, "表示条件に $val は書けない");
+});
+
+test("kact_try: slot には app（控え）が要る／作業フォルダーの外は読まない", { skip }, async () => {
+  const noApp = await tryFormulas({ formulas: [{ formula: '"x"', slot: "resultMessage" }] }, opt);
+  assert.equal(noApp.status, "invalid");
+  // 作業フォルダーの外に本当にファイルを置いてから（無いだけの not-found と区別する）
+  writeFileSync(join(ws, "..", "kact-try-outside.json"), CONFIG_WITH_MESSAGES);
+  const outside = await tryFormulas({ app: 1001, file: "../kact-try-outside.json", formulas: [{ formula: '"x"' }] }, opt);
+  assert.equal(outside.status, "denied", JSON.stringify(outside.findings));
+});
+

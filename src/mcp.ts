@@ -22,7 +22,7 @@ import { resolveInWorkspace, workspaceStatus, WorkspaceError } from "./workspace
 import { deleteAction, digestOf, filesOf, pullConfig, saveConfig, updateAction } from "./save.ts";
 import { appAreasFrom, appsFieldsFrom, connectionReport, fetchFields, findFieldsFile, listApps, listViews, type AppArea, type KintoneOptions } from "./fields.ts";
 import { diffConfigs } from "./diff.ts";
-import { tryFormulas } from "./try.ts";
+import { tryFormulas, TRY_SLOTS } from "./try.ts";
 import { toolsMeta } from "./meta.ts";
 import { DOCS, indexText, search, sectionKeys, sectionOf, sectionText } from "./docs.ts";
 
@@ -305,9 +305,18 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
         "評価はプラグイン本体の実行時と同じコード（authoring API 版 4 以降の zip が要る）。kintone には行かない（項目定義は kact_fields の控え）。" +
         "資料にある関数の使い方をなぞるだけなら呼ばない。**動きの確認を求められたとき・資料に無い端の値（空・0・未選択）を断言するとき**に、10 式までまとめて 1 回。" +
         "**値は架空のもの**を渡す（実在の個人情報・本番の値は入れない）。" +
-        "ループ（loop）のアクションのパラメーターの式を試すときは loop に 1 回ぶん（{ val, lno }）を渡す（$val / $lno が使えるようになる）。",
+        "ループ（loop）のアクションのパラメーターの式を試すときは loop に 1 回ぶん（{ val, lno }）を渡す（$val / $lno が使えるようになる）。" +
+        "**共通の文（$m_…）を試すときは file に設定ファイルを渡し、式ごとに slot（どの口に書く式か）を書く**。" +
+        "slot を書くと、その口で**本当に使える擬似項目だけ**が入った文脈で評価するので、kact_check が拒む式を「試せた」と誤解しない。",
       inputSchema: {
         app: z.number().int().positive().optional().describe("自アプリの番号（kact_fields の控えを使う）。省略すると項目の無い文脈（種類 app と同じ）"),
+        file: z
+          .string()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe("設定ファイル（作業フォルダーからの相対パス）。**共通の文（$m_…）を試すのに要る**。中の messages だけを読み、文そのものは返さない"),
+        lang: z.enum(["ja", "en", "zh"]).optional().describe("共通の文を解く言語（messages の text_<lang>）。省略は ja"),
         context: z.enum(["record", "none"]).optional().describe("レコード文脈。省略は app があれば record。none は種類 app・「まとめて 1 回」・「グループごと」と同じ（項目を参照すると誤りになる）"),
         data: z.record(z.unknown()).optional().describe("架空の値（項目コード → 値。チェックボックス・複数選択は配列、テーブルは行の配列 [{ 子のコード: 値 }]）。書かない項目は空。**選択肢に無い値は invalid で名指し**。実在の個人情報を入れない"),
         result: z.record(z.union([z.string(), z.number()])).optional().describe("結果メッセージを試すときの $result_* の値（例 { $result_updated: 4, $result_status: \"success\" }）。渡すと $result_* が使える文脈になる"),
@@ -323,18 +332,30 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
           .optional()
           .describe("ログインユーザー（LOGIN_INFO を使う式のとき。架空の値）"),
         formulas: z
-          .array(z.object({ formula: z.string().min(1).max(4000), as: z.enum(["value", "condition", "param"]).optional() }))
+          .array(
+            z.object({
+              formula: z.string().min(1).max(4000),
+              as: z.enum(["value", "condition", "param"]).optional(),
+              slot: z.enum(TRY_SLOTS).optional(),
+            }),
+          )
           .min(1)
           .max(10)
-          .describe("式（1〜10 本。式ごとに独立に評価する）。as は読み方の目安で、評価はどれも同じ"),
+          .describe(
+            "式（1〜10 本。式ごとに独立に評価する）。as は読み方の目安で、評価はどれも同じ。" +
+              "**slot は設定のどの口に書く式か**（showCond / execCond / execNgMessage / groupFormula / resultMessage / loop / param / keys / defaultFormula / optionsFormula / optionLabelsFormula）。" +
+              "書くと、その口で使える擬似項目だけで評価する（$m_… は execNgMessage / resultMessage / optionLabelsFormula、$result_* は resultMessage、$val / $lno は param / keys だけ）",
+          ),
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ app, context, data, result, user, loop, formulas }) =>
+    async ({ app, file, lang, context, data, result, user, loop, formulas }) =>
       json(
         await tryFormulas(
           {
             ...(app !== undefined ? { app } : {}),
+            ...(file !== undefined ? { file } : {}),
+            ...(lang !== undefined ? { lang } : {}),
             ...(context ? { context } : {}),
             ...(data ? { data } : {}),
             ...(result ? { result } : {}),

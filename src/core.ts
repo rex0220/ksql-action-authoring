@@ -146,7 +146,7 @@ export interface CheckResult {
  * - `keys`: キーの配列（文脈は常にレコード）
  * - `input`: 入力の式（レコードが使えるのは詳細画面のボタンだけ）
  */
-interface FormulaSlot {
+export interface FormulaSlot {
   where: string;
   raw: string;
   param?: true;
@@ -154,6 +154,44 @@ interface FormulaSlot {
   input?: true;
   /** 共通の文（`$m_…`）を書ける口（本体の `formulaContext.message(base)` を使う） */
   message?: true;
+}
+
+/**
+ * **その口をどの文脈で見るか**（本体の `ksql-action/src/config/dialogs.ts` の `push(…)` の並びと 1 対 1）。
+ *
+ * **`kact_check`（`checkFormulas`）と `kact_try`（`src/try.ts`）が同じこの関数を呼ぶ**。
+ * 別々に書くと、**`kact_try` で試せた式を `kact_check` が拒む**（またはその逆）ことになり、
+ * CLAUDE.md の「計算式の検査は、本体の設定画面と 1 対 1 に保つ」が破れる
+ * （2026-11-07 に `kact_try` へ共通の文を通すとき切り出した。Codex レビュー #4）。
+ *
+ * - `base`: 起動の形で決まるレコード文脈の有無（アプリ種別・まとめて 1 回・グループごとは `none`）
+ * - `inputBase`: 入力の式だけ規則が違う（本体の `inputUsesRecord`）
+ * - `isLooped`: ループがあるか（`hasLoop`）。`$result_runs` ほかと `$val` / `$lno` の可否が変わる
+ */
+export function contextForSlot(
+  contexts: FormulaContexts,
+  slot: FormulaSlot,
+  gates: { base: "record" | "none"; inputBase: "record" | "none"; isLooped: boolean },
+): { pp: unknown; crec: unknown } {
+  const { base, inputBase, isLooped } = gates;
+  const looped = isLooped && typeof contexts.loopParam === "function";
+  if (slot.where.startsWith("resultMessage")) {
+    // ループのときだけ使える `$result_runs` ほかを足す（本体の dialogs.ts と同じ）
+    return contexts.result(base, isLooped);
+  }
+  // 分ける式はレコードごとに評価する（本体の groupContext）
+  if (slot.where.startsWith("groupFormula")) return contexts.record;
+  // 共通の文を書ける口（NG の文・選択肢のラベル）。本体の dialogs.ts と同じ文脈
+  if (slot.message && contexts.message) return contexts.message(slot.input ? inputBase : base);
+  // 入力の式はループ値を使えない（聞くのはループの前に 1 回）
+  if (slot.input) return contexts[inputBase];
+  if (slot.param) {
+    // パラメーターの式だけ `$val` / `$lno` が使える。キーの配列は常にレコード（本体の keysContext）
+    const kind: "record" | "none" = slot.keys === true ? "record" : base;
+    return looped ? contexts.loopParam!(kind) : contexts[kind];
+  }
+  // 表示条件・実行条件・ループの式はふつうの文脈
+  return contexts[base];
 }
 
 /**
@@ -328,7 +366,6 @@ function checkFormulas(engine: Engine, actions: Array<Record<string, unknown>>, 
      * （2026-11-07 の対応漏れの洗い出しで見つけた。本体は 2026-11-05 の Codex レビュー MAJOR 13 で直済み）
      */
     const isLooped = typeof loopApi === "function" && loopApi(action);
-    const looped = isLooped && typeof contexts?.loopParam === "function";
     /**
      * 「グループごと」か（本体の `isSelectionGrouped`。API 版 1 からある）。
      * `loop` の口は、**`hasLoop` の無い古い zip では今までどおり見る**（判定を写さないため）
@@ -338,27 +375,9 @@ function checkFormulas(engine: Engine, actions: Array<Record<string, unknown>>, 
       grouped: typeof groupedApi === "function" ? groupedApi(action) : true,
       looped: typeof loopApi === "function" ? isLooped : true,
     };
-    /** パラメーターの文脈（`keys` は常にレコード、ほかは起動の形で決まる `base`） */
-    const paramContext = (keys: boolean): { pp: unknown; crec: unknown } => {
-      const kind: "record" | "none" = keys ? "record" : base;
-      return looped ? contexts!.loopParam!(kind) : contexts![kind];
-    };
     for (const slot of formulaSlots(action, gates)) {
-      const context = !contexts
-        ? emptyContext
-        : slot.where.startsWith("resultMessage")
-          // ループのときだけ使える `$result_runs` ほかを足す（本体の dialogs.ts と同じ）
-          ? contexts.result(base, isLooped)
-          : slot.where.startsWith("groupFormula")
-            ? contexts.record // 分ける式はレコードごとに評価する（本体の groupContext）
-            : slot.message && contexts.message
-              // 共通の文を書ける口（NG の文・選択肢のラベル）。本体の dialogs.ts と同じ文脈
-              ? contexts.message(slot.input ? inputBase : base)
-              : slot.input
-              ? contexts[inputBase] // 入力の式はループ値を使えない（聞くのはループの前に 1 回）
-              : slot.param
-                ? paramContext(slot.keys === true) // パラメーターの式だけ $val / $lno が使える
-                : contexts[base]; // 表示条件・実行条件・NG の文・ループの式はふつうの文脈
+      // 文脈の選び方は `kact_try` と共有する（別々に書くと食い違う。`contextForSlot` の注記）
+      const context = contexts ? contextForSlot(contexts, slot, { base, inputBase, isLooped }) : emptyContext;
       const r = engine.api.checkFormula(context, slot.raw) as { ok: boolean; msg?: string };
       if (r.ok) continue;
       const unknown = UNKNOWN_NAME_RE.exec(r.msg ?? "");

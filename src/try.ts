@@ -10,9 +10,11 @@
  * - kintone には行かない。項目定義は `kact_fields` が置いた控えだけ。**値は AI か利用者が渡す架空のもの**
  */
 import type { Finding, ToolStatus } from "./core.ts";
-import { contextsFrom, type FormulaContexts } from "./core.ts";
+import { contextForSlot, contextsFrom, type FormulaContexts, type FormulaSlot } from "./core.ts";
 import { loadEngine, type Engine, type LoadEngineOptions } from "./engine.ts";
 import { findFieldsFile } from "./fields.ts";
+import { resolveInWorkspace, WorkspaceError } from "./workspace.ts";
+import { readFileSync } from "node:fs";
 
 /** レコードの 1 項目（kintone のレコードと同じ形。値は文字列・配列） */
 interface Cell {
@@ -20,16 +22,69 @@ interface Cell {
   value?: unknown;
 }
 
+/**
+ * 設定のどの口の式か（`kact_check` が見る口と同じ名前）。
+ * **渡すと、その口で本当に使える擬似項目だけが入った文脈で評価する**
+ * （`$m_…` は共通の文を書ける 3 つの口だけ、`$result_*` は結果メッセージだけ、
+ * `$val` / `$lno` はパラメーターの式だけ）。省略すると今までどおり、渡した値を全部入れて評価する。
+ */
+export const TRY_SLOTS = [
+  "showCond",
+  "execCond",
+  "execNgMessage",
+  "groupFormula",
+  "resultMessage",
+  "loop",
+  "param",
+  "keys",
+  "defaultFormula",
+  "optionsFormula",
+  "optionLabelsFormula",
+] as const;
+export type TrySlot = (typeof TRY_SLOTS)[number];
+
 export interface TryFormula {
   /** 式（kact の計算式の口に書くもの） */
   formula: string;
   /** 何の口として見るか（返りの読み方が変わるだけで、評価は同じ）。省略は value */
   as?: "value" | "condition" | "param";
+  /**
+   * **設定のどの口に書く式か**（`TRY_SLOTS`）。渡すと、その口で**本当に使える擬似項目だけ**で評価する。
+   * `kact_check` が使う `contextForSlot`（`core.ts`）と**同じ関数**で文脈を選ぶので、
+   * 「`kact_try` では通るのに `kact_check` が拒む」式を作れない
+   */
+  slot?: TrySlot;
+}
+
+/** `TrySlot` → `contextForSlot` に渡す印（`core.ts` の `formulaSlots` が作るものと同じ形） */
+function slotShape(slot: TrySlot): FormulaSlot {
+  switch (slot) {
+    case "resultMessage": return { where: "resultMessage（結果メッセージ）", raw: "", message: true };
+    case "execNgMessage": return { where: "execNgMessage（実行条件 NG のメッセージ）", raw: "", message: true };
+    case "groupFormula": return { where: "groupFormula（分ける式）", raw: "" };
+    case "param": return { where: "params の式", raw: "", param: true };
+    case "keys": return { where: "params の式（キーの配列）", raw: "", param: true, keys: true };
+    case "defaultFormula": return { where: "inputs の既定値", raw: "", input: true };
+    case "optionsFormula": return { where: "inputs の選択肢の式", raw: "", input: true };
+    case "optionLabelsFormula": return { where: "inputs の選択肢のラベルの式", raw: "", input: true, message: true };
+    default: return { where: `${slot}`, raw: "" }; // showCond / execCond / loop
+  }
 }
 
 export interface TryInput {
   /** 自アプリの番号（`kact_fields` の控えを使う）。省略すると**項目の無い文脈**（種類 app と同じ） */
   app?: number;
+  /**
+   * 設定ファイル（作業フォルダーからの相対パス）。**共通の文（`$m_…`）を試すのに要る**。
+   *
+   * 中の `messages` を読んで、実行時とまったく同じやり方で値を差し込む
+   * （本体の `messageValues`〈API 版 7〉＋ `withResultRecord`〈版 4〉。
+   * 実行時の `withMessageRecord` の中身がこの 2 つなので、判定も文も写していない）。
+   * **設定の中身はここでしか読まず、返りにも出さない**（返すのは式の値だけ）
+   */
+  file?: string;
+  /** 共通の文を解く言語（`messages` の `text_<lang>`。省略は `ja`） */
+  lang?: string;
   /** レコード文脈。省略は app があれば record、無ければ none */
   context?: "record" | "none";
   /** 架空の値（項目コード → 値。テーブルは行の配列）。書かない項目は空 */
@@ -77,6 +132,8 @@ export interface TryResult {
   withResult?: boolean;
   /** `$val` / `$lno` を足した文脈か（渡された回の値をそのまま返す） */
   loop?: { val: string | number; lno: number };
+  /** 設定ファイルから読んだ共通の文の件数（**文そのものは返さない**） */
+  messages?: number;
   results?: TryValue[];
   findings: Finding[];
   message?: string;
@@ -225,36 +282,82 @@ export async function tryFormulas(input: TryInput, opt: LoadEngineOptions & { wo
   let contexts: FormulaContexts | undefined;
   let fieldsFrom: string | undefined;
   const findings: Finding[] = [];
+
+  /**
+   * 共通の文（`$m_…`）。**設定ファイルから読む**（AI に文を作文させない。`kact_actions` はコードしか返さない）。
+   * 読むのは `messages` だけで、返りには出さない（設定の中身は返さない約束）
+   */
+  let messages: unknown;
+  let messageValuesOfFile: Record<string, string> = {};
+  if (input.file !== undefined) {
+    const msgApi = (engine.api as { messageValues?: (m: unknown, lang: string) => Record<string, string>; LANGS?: readonly string[] });
+    if (typeof msgApi.messageValues !== "function") {
+      return fail("api-too-old", `この zip の authoring API（版 ${String(engine.api.apiVersion)}）には共通の文の口が無い（file を渡すには版 7 以降が要る）`, "incompatible");
+    }
+    const lang = input.lang ?? "ja";
+    if (Array.isArray(msgApi.LANGS) && !msgApi.LANGS.includes(lang)) {
+      return fail("input", `lang は ${msgApi.LANGS.join(" / ")} のどれかで渡す`, "invalid");
+    }
+    let text: string;
+    try {
+      text = readFileSync(resolveInWorkspace(input.file, opt.workspaceDir), "utf8");
+    } catch (e) {
+      const code = e instanceof WorkspaceError ? e.code : "read-failed";
+      return fail(code, e instanceof Error ? e.message : String(e), code === "outside" ? "denied" : "invalid");
+    }
+    try {
+      const parsed: unknown = JSON.parse(text);
+      const obj = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+      // 封筒ごとでも本体だけでも受ける（`config` があればその中）
+      const body = (obj.config && typeof obj.config === "object" ? obj.config : obj) as Record<string, unknown>;
+      messages = body.messages;
+    } catch (e) {
+      return fail("parse-failed", `設定ファイルを読めない: ${e instanceof Error ? e.message : String(e)}`, "invalid");
+    }
+    messageValuesOfFile = msgApi.messageValues(messages, lang);
+    if (Object.keys(messageValuesOfFile).length === 0) {
+      findings.push({ level: "warning", code: "no-messages", message: `${input.file} に共通の文（messages）が無いので、$m_… は使えない（設定画面のツールバーの［メッセージ］で足す）` });
+    }
+  }
   if (input.app !== undefined) {
     const found = findFieldsFile(input.app, opt.workspaceDir);
     if (!found) {
       return fail("fields-missing", `アプリ ${input.app} の項目定義の控えが無い（先に kact_fields で取る）`, "invalid");
     }
     fieldsFrom = found.path;
-    contexts = await contextsFrom(engine, found.file.properties as unknown as Record<string, unknown>, input.app);
+    /**
+     * **共通の文を必ず渡す**（§8.4。API 版 7）。渡さないと `$m_…` の擬似項目が 1 つも無い文脈になり、
+     * `messages` に正しく定義した文まで「無い項目」になる
+     * （2026-11-07 の Codex レビュー #4。`checkConfig` 側は 0.11.1 で直したが、ここが残っていた）
+     */
+    contexts = await contextsFrom(engine, found.file.properties as unknown as Record<string, unknown>, input.app, messages);
   }
   const context: "record" | "none" = input.context ?? (contexts ? "record" : "none");
   if (context === "record" && !contexts) {
     return fail("input", "context: \"record\" には app（項目定義の控え）が要る", "invalid");
   }
 
-  let pp: unknown = contexts && context === "record" ? contexts.record.pp : {};
-  let base: Record<string, unknown> = (contexts && context === "record" ? (contexts.record.crec as Record<string, unknown>) : {}) as Record<string, unknown>;
+  /**
+   * **`slot` を渡さない式が使う文脈**（今までどおり、渡した値を全部入れたもの）。
+   * `slot` を渡した式は、口ごとに `slotContext()` が作り直す
+   */
+  let sharedPp: unknown = contexts && context === "record" ? contexts.record.pp : {};
+  let sharedBase: Record<string, unknown> = (contexts && context === "record" ? (contexts.record.crec as Record<string, unknown>) : {}) as Record<string, unknown>;
 
   // 架空の値を差し込む（項目定義にない項目は invalid）
   if (input.data && Object.keys(input.data).length) {
     if (context !== "record") return fail("input", "data（架空の値）は context: \"record\" のときだけ使える（項目の無い文脈では値を持てない）", "invalid");
-    const { record, problems } = applyData(pp as Record<string, { type?: string; fields?: Record<string, unknown> }>, base, input.data);
+    const { record, problems } = applyData(sharedPp as Record<string, { type?: string; fields?: Record<string, unknown> }>, sharedBase, input.data);
     if (problems.length) return { status: "invalid", findings: problems.map((p) => ({ level: "error" as const, code: "data", message: p })) };
-    base = record;
+    sharedBase = record;
   }
 
   // 結果メッセージの文脈（$result_* を足す）。足すのは本体の withResultRecord
   const withResult = !!input.result;
   if (input.result) {
-    const r = evalApi.withResultRecord(pp, base, input.result);
-    pp = r.pp;
-    base = r.record as Record<string, unknown>;
+    const r = evalApi.withResultRecord(sharedPp, sharedBase, input.result);
+    sharedPp = r.pp;
+    sharedBase = r.record as Record<string, unknown>;
   }
 
   /**
@@ -271,19 +374,60 @@ export async function tryFormulas(input: TryInput, opt: LoadEngineOptions & { wo
     const lno = input.loop.lno ?? 0;
     if (!Number.isSafeInteger(lno) || lno < 0) return fail("input", "loop.lno は 0 以上の整数で渡す（回の番号は 0 から）", "invalid");
     loop = { val, lno };
-    const r = evalApi.withResultRecord(pp, base, { $val: val, $lno: lno });
-    pp = r.pp;
-    base = r.record as Record<string, unknown>;
+    const r = evalApi.withResultRecord(sharedPp, sharedBase, { $val: val, $lno: lno });
+    sharedPp = r.pp;
+    sharedBase = r.record as Record<string, unknown>;
   }
 
   if (input.user) {
     engine.setContext({ loginUser: { id: "1", code: "", name: "", email: "", language: "ja", ...input.user } });
   }
 
+  /**
+   * **口ごとの文脈**（`slot` を渡したときだけ）。
+   *
+   * 擬似項目の決め方は `kact_check` と**同じ `contextForSlot`**（`core.ts`）に任せ、
+   * tools 側に「どの口で何が使えるか」の表を 2 つ持たない。
+   * 値は、**その文脈に擬似項目があるものだけ**を差し込む（`withResultRecord` は何でも足せてしまうので、
+   * ここで絞らないと「`kact_try` では通るのに `kact_check` が拒む」式を作れる）。
+   * 差し込めなかったものは findings で知らせる（黙って落とさない）。
+   */
+  const want: Record<string, string | number> = {
+    ...(input.result ?? {}),
+    ...(loop ? { $val: loop.val, $lno: loop.lno } : {}),
+    ...messageValuesOfFile,
+  };
+  const slotContext = (slot: TrySlot): { pp: unknown; base: Record<string, unknown>; ignored: string[] } => {
+    const ctx = contextForSlot(contexts!, slotShape(slot), { base: context, inputBase: context, isLooped: !!loop });
+    // 利用者が渡した架空の値（data）を当て直す
+    let rec = ctx.crec as Record<string, unknown>;
+    if (input.data && Object.keys(input.data).length) {
+      rec = applyData(ctx.pp as Record<string, { type?: string; fields?: Record<string, unknown> }>, rec, input.data).record;
+    }
+    const slotPp = ctx.pp as Record<string, unknown>;
+    const allowed: Record<string, string | number> = {};
+    const ignored: string[] = [];
+    for (const [k, v] of Object.entries(want)) (k in slotPp ? (allowed[k] = v) : ignored.push(k));
+    if (Object.keys(allowed).length === 0) return { pp: ctx.pp, base: rec, ignored };
+    const made = evalApi.withResultRecord(ctx.pp, rec, allowed);
+    return { pp: made.pp, base: made.record as Record<string, unknown>, ignored };
+  };
+
   const results: TryValue[] = [];
+  const ignoredSeen = new Set<string>();
   for (const [i, f] of formulas.entries()) {
     const as = f.as ?? "value";
     const raw = String(f.formula ?? "");
+    let pp = sharedPp;
+    let base = sharedBase;
+    if (f.slot !== undefined) {
+      if (!TRY_SLOTS.includes(f.slot)) return fail("input", `slot は ${TRY_SLOTS.join(" / ")} のどれかで渡す`, "invalid");
+      if (!contexts) return fail("input", "slot を渡すには app（項目定義の控え）が要る（口ごとの文脈を本体に作らせるため）", "invalid");
+      const made = slotContext(f.slot);
+      pp = made.pp;
+      base = made.base;
+      for (const k of made.ignored) ignoredSeen.add(`${k}（${f.slot}）`);
+    }
     const r = evalApi.evalFormula(pp, base, raw);
     if (!r.ok) {
       results.push({ index: i + 1, formula: raw, as, ok: false, error: r.msg ?? "評価に失敗した" });
@@ -301,6 +445,33 @@ export async function tryFormulas(input: TryInput, opt: LoadEngineOptions & { wo
     });
   }
 
+  /**
+   * 渡した値のうち、**その口では使えないので差し込まなかったもの**。
+   * 黙って落とすと「試せたのに実機で落ちる」になるので必ず知らせる
+   * （本体の設定画面も `message:slot` で同じことを断る）
+   */
+  if (ignoredSeen.size > 0) {
+    findings.push({
+      level: "warning",
+      code: "slot-not-allowed",
+      message:
+        `その口では使えない擬似項目があったので値を入れていません（${[...ignoredSeen].join(" / ")}）。`
+        + "`$m_…` は **execNgMessage / resultMessage / optionLabelsFormula** の 3 つだけ、"
+        + "`$result_*` は **resultMessage** だけ、`$val` / `$lno` は **パラメーターの式**だけです"
+        + "（`kact_check` も同じところで断ります）",
+    });
+  }
+  // `file` を渡したのに口を言わない式がある = `$m_…` は入らない（黙って「無い項目」で落ちるのを防ぐ）
+  if (input.file !== undefined && formulas.some((f) => f.slot === undefined)) {
+    findings.push({
+      level: "warning",
+      code: "slot-missing",
+      message:
+        "`slot` を書いていない式には共通の文（`$m_…`）を入れていません。"
+        + "どの口に書く式かを `slot` で指定してください（`execNgMessage` / `resultMessage` / `optionLabelsFormula`）",
+    });
+  }
+
   const ng = results.filter((r) => !r.ok).length;
   return {
     status: "ok",
@@ -309,6 +480,7 @@ export async function tryFormulas(input: TryInput, opt: LoadEngineOptions & { wo
     ...(fieldsFrom ? { fieldsFrom } : {}),
     ...(withResult ? { withResult: true } : {}),
     ...(loop ? { loop } : {}),
+    ...(input.file !== undefined ? { messages: Object.keys(messageValuesOfFile).length } : {}),
     results,
     findings,
     message:
@@ -316,6 +488,7 @@ export async function tryFormulas(input: TryInput, opt: LoadEngineOptions & { wo
       `${loop ? `（ループの回 $val=${JSON.stringify(loop.val)} / $lno=${String(loop.lno)}）` : ""}` +
       `${ng ? `（${ng} 本が失敗）` : ""}。**架空の値での模擬**で、利用者のレコードでは値が変わる。` +
       `condition は表示条件・実行条件として見たときの真偽、param は SQL に注入される文字列` +
+      `${input.file !== undefined ? `。共通の文 ${String(Object.keys(messageValuesOfFile).length)} 件を ${String(input.lang ?? "ja")} で解いた（slot を書いた式だけに入る）` : ""}` +
       `${loop ? "。$val / $lno が使えるのは**パラメーターの式だけ**（ほかの口に書くと実行時に「無い項目」で落ちる）" : ""}`,
   };
 }

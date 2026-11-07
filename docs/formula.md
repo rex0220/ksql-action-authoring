@@ -68,6 +68,17 @@
 - **1 回に 10 式まで**（探索を続けない）。式ごとに独立に評価します（1 つの誤りがほかを止めない）。
 - `app` を省くと**項目の無い文脈**（種類 app・「まとめて 1 回」・「グループごと」と同じ）。項目を参照すると誤りになります。
 - `result`（`{ "$result_updated": 4 }` など）を渡すと、**結果メッセージの文脈**（`$result_*` が使える）になります。
+- **`slot`（どの口に書く式か）を書くと、その口で本当に使える擬似項目だけ**で評価します。
+  書かないと渡した値が全部入るので、**`kact_try` では通るのに `kact_check` が拒む式**を作れてしまいます。
+
+| `slot` | その口で増える擬似項目 |
+|---|---|
+| `resultMessage` | `$result_*` と `$m_…` |
+| `execNgMessage` / `optionLabelsFormula` | `$m_…` |
+| `param` / `keys` | `$val` / `$lno`（`loop` を渡したとき） |
+| `showCond` / `execCond` / `groupFormula` / `loop` / `defaultFormula` / `optionsFormula` | 増えない |
+
+- 使えない擬似項目に値を渡すと、**入れずに `slot-not-allowed` で知らせます**（黙って落としません）。
 - `loop`（`{ "val": 2017, "lno": 0 }`）を渡すと、**ループのパラメーターの文脈**（`$val` / `$lno` が使える）になります。
   **`$val` は渡した型のまま**なので、`2017 + $val` を数で試せば足し算、文字列で試せば連結になります（`loop` の章）。
 - `user`（`{ "code": "demo_user01" }`）を渡すと `LOGIN_INFO` が効きます。
@@ -160,6 +171,28 @@ REPLACE($m_done, "{n}", $result_total)
 
 > **`messages` はツールからは足せません。** 今あるコードは `kact_actions` の返りの `messages` で分かります。
 > 新しい文が要るときは、利用者に設定画面の［メッセージ］で足してもらってください。
+
+### 共通の文を使う式を試す
+
+`kact_try` に **`file`（設定ファイル）と `slot`** を渡します。設定の `messages` を読んで、
+**実行時とまったく同じやり方**で値を差し込みます（文そのものは返りません）。
+
+```jsonc
+{
+  "app": 1001,
+  "file": "settings/kact-1001.json",   // この設定の messages を使う
+  "lang": "ja",                         // 省略は ja（text_en / text_zh に切り替えられる）
+  "formulas": [
+    { "formula": "REPLACE($m_done, \"{n}\", $result_total)", "slot": "resultMessage" }
+  ],
+  "result": { "$result_total": 12 }
+}
+// → value: "12 件を書き込みました"
+```
+
+`slot` を書かない式には `$m_…` は入りません（`slot-missing` で知らせます）。
+`showCond` のように**書けない口**を指定すると「無い項目」になり、`slot-not-allowed` でどこなら書けるかを返します
+（`kact_check` の `message:slot` と同じ判断です）。
 
 ## よく使う式
 
