@@ -20,7 +20,7 @@ export const KSQL_ACTION_PLUGIN_ID = "afkekkiffjhdkcepekecalklafjhbcmf";
 /** tools が扱う kSQL アクションの版の下限（manifest.json の version。authoring API は Ver.1 から同梱） */
 export const MIN_PLUGIN_VERSION = 1;
 /** tools が対応する authoring API の版（ksql-action の src/authoring/api.ts の AUTHORING_API_VERSION） */
-export const SUPPORTED_API_VERSIONS: readonly number[] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+export const SUPPORTED_API_VERSIONS: readonly number[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
 /** kSQL アクションの版として扱えるか（整数で MIN_PLUGIN_VERSION 以上） */
 export function isSupportedPluginVersion(version: string): boolean {
@@ -134,6 +134,14 @@ export const API_V9: Record<string, "function" | "object" | "string" | "number">
   messageText: "function",
 };
 
+/**
+ * 版 10（2026-11-07）: **保存された設定をほどく**（`kact_pull` がアプリ番号から読むのに使う）。
+ * kintone の `GET /k/v1/app/plugin/config.json`（APIラボ）が返すのは
+ * **`setConfig` が入れたままのキーと値**で、封筒形式ではない。
+ * ほどき方（分割されたキーの連結・`compress` の別・旧形式）は**本体の kit が正本**なので写さない。
+ */
+export const API_V10: Record<string, "function"> = { readStoredConfig: "function" };
+
 export function requiredApiFor(apiVersion: number): Record<string, "function" | "object" | "string" | "number"> {
   const api = { ...REQUIRED_API };
   if (apiVersion >= 3) Object.assign(api, API_V3);
@@ -142,6 +150,7 @@ export function requiredApiFor(apiVersion: number): Record<string, "function" | 
   if (apiVersion >= 7) Object.assign(api, API_V7);
   if (apiVersion >= 8) Object.assign(api, API_V8);
   if (apiVersion >= 9) Object.assign(api, API_V9);
+  if (apiVersion >= 10) Object.assign(api, API_V10);
   return api;
 }
 

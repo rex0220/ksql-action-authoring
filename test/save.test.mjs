@@ -649,3 +649,120 @@ test("listActions: 共通設定（panel を含む）を返す", { skip }, async 
   assert.deepEqual(r.messages, ["m_done"]);
 });
 
+/**
+ * `kact_pull` の `app`（アプリ番号から直に読む。**APIラボ**）。2026-11-07 Takashi「先にやる」。
+ *
+ * 設定画面で［設定をダウンロード］してもらう往復をなくす道。返るのは
+ * **`setConfig` が入れたままのキーと値**なので、ほどくのは**本体の `readStoredConfig`**（API 版 10）。
+ * **ほどき方を tools に写さない**（分割の仕方・`compress` の別・旧形式が本物とずれる）。
+ *
+ * kintone には行かず、`fetchImpl` で応答を差し替える。
+ */
+const PLUGIN_ID = "afkekkiffjhdkcepekecalklafjhbcmf";
+
+/** 本体の kit と同じ畳み方で「保存された設定」を作る（compress:"2"） */
+async function storedOf(body) {
+  const json = JSON.stringify(body);
+  const encoded = encodeURIComponent(json);
+  const bytes = new TextEncoder().encode(encoded);
+  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("deflate"));
+  const out = new Uint8Array(await new Response(stream).arrayBuffer());
+  let bin = "";
+  for (const b of out) bin += String.fromCharCode(b);
+  return { compress: "2", json: btoa(bin) };
+}
+
+const storedBody = {
+  configVersion: 1,
+  bindings: [{ name: "受注", appId: 1001 }],
+  limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+  timezone: "",
+  actions: [{
+    enabled: true, code: "sum", name: "集計する", description: "", type: "record", placements: ["detail_menu"],
+    panelSection: "", showCond: "", execCond: "", execNgMessage: "", params: [], inputs: [],
+    sql: "-- @ksql dialect: 1\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE $id = 1;",
+    staticInsertRows: 0, confirm: true, writeLimit: 10, allowed: [], allowAll: true, resultMessage: "",
+    listOnError: "continue", groupFormula: "", perRecordLock: false, prevRecord: false,
+  }],
+};
+
+/** 接続のファイルを用意する（profile は名前だけ。秘密の値は試験の中だけ） */
+function withConnection() {
+  const conn = join(ws, "ksql.config.json");
+  writeFileSync(conn, JSON.stringify({
+    defaultProfile: "dev",
+    profiles: { dev: { baseUrl: "https://example.cybozu.com", auth: "userpass", username: "u", password: "p" } },
+  }));
+  return { pluginZip: ZIP, configFile: conn, env: {} };
+}
+
+test("pullConfig(app): アプリ番号から直に読んで封筒を付けて写す", { skip }, async () => {
+  const stored = await storedOf(storedBody);
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(String(url));
+    const body = String(url).includes("/app.json") ? { name: "受注" } : { config: stored, revision: "7" };
+    return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const r = await save.pullConfig({ app: 1001, to: "settings/from-api.json", fetchImpl }, { ...withConnection() });
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+
+  // アプリの名前（どのアプリから読んだかを見せる）＋ 設定の 2 回
+  assert.equal(calls.length, 2, JSON.stringify(calls));
+  assert.match(calls[0], /\/app\.json/);
+  // **既定は動作テスト環境**（設定画面が編集しているほう）。プラグイン ID は固定で付く
+  assert.match(calls[1], /preview\/app\/plugin\/config\.json/);
+  assert.match(calls[1], new RegExp(`id=${PLUGIN_ID}`));
+  assert.match(calls[1], /app=1001/);
+
+  // 封筒が付いて、設定画面のダウンロードと同じ形になっている
+  const env = JSON.parse(readFileSync(join(ws, "settings/from-api.json"), "utf8"));
+  assert.equal(env.appId, 1001);
+  assert.equal(env.actions.length, 1);
+  assert.equal(env.actions[0].code, "sum");
+  // どこから読んだかを必ず言う（黙って読まない）
+  assert.ok(r.findings.some((f) => f.code === "from-api-lab"), JSON.stringify(r.findings));
+});
+
+test("pullConfig(app): production を渡すと運用環境を読む", { skip }, async () => {
+  const stored = await storedOf(storedBody);
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(String(url));
+    const body = String(url).includes("/app.json") ? { name: "受注" } : { config: stored, revision: "7" };
+    return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const r = await save.pullConfig({ app: 1001, production: true, to: "settings/from-api-prod.json", fetchImpl }, { ...withConnection() });
+  assert.match(calls[1], /app\/plugin\/config\.json/);
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  assert.doesNotMatch(calls[1], /preview/);
+  // アプリ名も封筒に入る（どのアプリから読んだかが分かる）
+  assert.equal(JSON.parse(readFileSync(join(ws, "settings/from-api-prod.json"), "utf8")).appName, "受注");
+});
+
+test("pullConfig: from と app は片方だけ", { skip }, async () => {
+  const both = await save.pullConfig({ from: "inbox/x.json", app: 1001 }, { pluginZip: ZIP });
+  assert.equal(both.status, "invalid");
+  const neither = await save.pullConfig({}, { pluginZip: ZIP });
+  assert.equal(neither.status, "invalid");
+});
+
+test("pullConfig(app): APIラボが使えないときは、ファイルの道を案内する", { skip }, async () => {
+  const fetchImpl = async () =>
+    new Response(JSON.stringify({ code: "GAIA_IL01", id: "x", message: "not found" }), { status: 404, headers: { "content-type": "application/json" } });
+  const r = await save.pullConfig({ app: 1001, to: "settings/never.json", fetchImpl }, { ...withConnection() });
+  assert.notEqual(r.status, "ok");
+  const w = r.findings.find((f) => f.code === "api-lab");
+  assert.ok(w, JSON.stringify(r.findings));
+  assert.match(w.message, /設定をダウンロード/);
+  assert.equal(existsSync(join(ws, "settings/never.json")), false, "読めなかったのにファイルを作っている");
+});
+
+test("pullConfig(app): 設定が空なら plugin-not-added（写さない）", { skip }, async () => {
+  const fetchImpl = async () => new Response(JSON.stringify({ config: {}, revision: "1" }), { status: 200, headers: { "content-type": "application/json" } });
+  const r = await save.pullConfig({ app: 1001, to: "settings/empty.json", fetchImpl }, { ...withConnection() });
+  assert.equal(r.status, "invalid");
+  assert.equal(r.findings[0].code, "plugin-not-added");
+  assert.equal(existsSync(join(ws, "settings/empty.json")), false);
+});
+

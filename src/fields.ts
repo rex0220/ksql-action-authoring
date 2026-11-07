@@ -20,6 +20,7 @@ import {
   type ProfileDef,
 } from "./connections.ts";
 import { createRestClient, NotAllowedError, RestError } from "./kintone-rest.ts";
+import { KSQL_ACTION_PLUGIN_ID } from "./meta.ts";
 import { resolveNewInWorkspace, workspaceDir } from "./workspace.ts";
 
 /** 項目定義 1 つ分（kintone の form/fields の properties の値。知らないキーはそのまま持つ） */
@@ -663,5 +664,76 @@ export async function listApps(input: { profile?: string; limit?: number; name?:
     };
   } catch (e) {
     return { ...fromConnectionError(e), profile: def.profile, host: def.host };
+  }
+}
+
+/**
+ * アプリに入っている **kSQL アクションの設定**を kintone から直に読む（**APIラボ**）。
+ *
+ * `GET /k/v1/app/plugin/config.json`（動作テスト環境は `preview/…`）。返るのは
+ * **`setConfig` が入れたままのキーと値**なので、ほどくのは**本体の `readStoredConfig`**（API 版 10）。
+ * ほどき方を tools に写さない（分割の仕方・`compress` の別・旧形式が本物とずれる）。
+ *
+ * **プラグイン ID は固定**（引数で受けない）。受けると**他社プラグインの設定を読める口**になり、
+ * 他社の設定には鍵が入っていることがある。
+ *
+ * **APIラボは「テスト環境だけでの利用を推奨」**（サイボウズの注記）なので、
+ * ここが使えないことを**普通のこと**として扱う。呼び出し側は
+ * 「設定画面で［設定をダウンロード］してもらう」道に落とす。
+ */
+export async function fetchPluginConfig(
+  input: { app: number; profile?: string; preview?: boolean },
+  opt: KintoneOptions = {},
+): Promise<{ status: ToolStatus; profile?: string; host?: string; appName?: string; stored?: Record<string, string>; revision?: string; findings: Finding[] }> {
+  if (!Number.isSafeInteger(input.app) || input.app <= 0) return fail("input", "app はアプリの番号（正の整数）で渡す", "invalid");
+  let conn: { set: ConnectionSet; def: ProfileDef };
+  try {
+    conn = connectionFor(input.profile, opt);
+  } catch (e) {
+    return fromConnectionError(e);
+  }
+  const { set, def } = conn;
+  try {
+    const client = createRestClient(authFor(set, def, input.app), opt.fetchImpl);
+    // アプリの名前も取る（封筒に入れ、**どのアプリから読んだかを利用者に見せる**ため。取り違えの歯止め）
+    const app = await client.get<{ name?: string }>("app", { id: input.app }, def.guestSpaceId ?? undefined);
+    const r = await client.get<{ config?: Record<string, string>; revision?: unknown }>(
+      // 既定は**動作テスト環境**（設定画面が編集しているのはこちら。`kact_fields` の preview と同じ考え）
+      input.preview === false ? "app/plugin/config" : "preview/app/plugin/config",
+      { app: input.app, id: KSQL_ACTION_PLUGIN_ID },
+      def.guestSpaceId ?? undefined,
+    );
+    const stored = r.config ?? {};
+    if (Object.keys(stored).length === 0) {
+      return {
+        status: "invalid",
+        profile: def.profile,
+        host: def.host,
+        findings: [{
+          level: "error",
+          code: "plugin-not-added",
+          message: `アプリ ${input.app} に kSQL アクションの設定がありません（プラグインを追加して、設定を 1 度保存してもらってください）`,
+        }],
+      };
+    }
+    return { status: "ok", profile: def.profile, host: def.host, appName: String(app.name ?? ""), stored, revision: String(r.revision ?? ""), findings: [] };
+  } catch (e) {
+    const r = fromConnectionError(e);
+    return {
+      ...r,
+      profile: def.profile,
+      host: def.host,
+      findings: [
+        ...r.findings,
+        {
+          level: "warning",
+          code: "api-lab",
+          message:
+            "この口は**APIラボ**（検討中の新機能）です。ドメインで有効になっていないと使えません"
+            + "（アップデートオプションの「検討中の新機能」）。"
+            + "**使えないときは、これまでどおり設定画面の［設定をダウンロード］→ `kact_pull`（`from`）で進めてください**",
+        },
+      ],
+    };
   }
 }

@@ -15,7 +15,7 @@ import { acquireLock, cleanupAll, placeNew, tempPathFor, withRetry, FileExistsEr
 import { loadEngine, type Engine, type LoadEngineOptions } from "./engine.ts";
 import { checkConfig, type CheckOptions, type Finding, type ToolStatus } from "./core.ts";
 import { actionDiff } from "./diff.ts";
-import { appAreasFrom, appsFieldsFrom, findFieldsFile } from "./fields.ts";
+import { appAreasFrom, appsFieldsFrom, fetchPluginConfig, findFieldsFile, type KintoneOptions } from "./fields.ts";
 import { listWorkspaceFiles, MAX_CONFIG_BYTES, resolveInWorkspace, resolveNewInWorkspace, workspaceDir, WorkspaceError, type WorkspaceFile } from "./workspace.ts";
 
 /** 封筒のキー（これ以外が設定の本体） */
@@ -537,35 +537,103 @@ function formatDate(d: Date): string {
 
 export interface PullInput {
   /** 設定画面の［設定をダウンロード］で取ったファイル（作業フォルダーからの相対パス。例 inbox/kact-app1001.json） */
-  from: string;
+  from?: string;
+  /**
+   * **アプリ番号から直に読む**（`from` の代わり。**APIラボ**の
+   * `GET /k/v1/app/plugin/config.json`）。設定画面でダウンロードしてもらう往復が要らない。
+   * **APIラボが有効でないドメインでは使えない**ので、そのときは `from` に落とす
+   */
+  app?: number;
+  /** `app` のときの接続（省略すると defaultProfile） */
+  profile?: string;
+  /** `app` のとき、運用環境の設定を読む（既定は**動作テスト環境** ＝ 設定画面が編集しているほう） */
+  production?: boolean;
   /** 写す先（省略すると settings/APP<アプリ ID>.json） */
   to?: string;
+  /** 試験で差し替える（kintone に行かずに「保存された設定」を渡す） */
+  fetchImpl?: typeof fetch;
 }
 
 /**
  * ダウンロードした設定ファイルを作業フォルダーに取り込む（直すときの元）。
  * **元のファイルは残す**（書き換えない）。検査は通らなくても写す（直すために取り込むので）。
  */
-export async function pullConfig(input: PullInput, opt: LoadEngineOptions = {}): Promise<SaveResult> {
+export async function pullConfig(input: PullInput, opt: LoadEngineOptions & KintoneOptions = {}): Promise<SaveResult> {
   const engine = await engineOf(opt);
   if (isResult(engine)) return engine;
 
-  let from: string;
-  try {
-    from = resolveInWorkspace(input.from);
-  } catch (e) {
-    return fromWorkspaceError(e);
+  if ((input.from === undefined) === (input.app === undefined)) {
+    return fail("input", "from（ダウンロードしたファイル）か app（アプリ番号から直に読む）の**どちらか一方**を渡す", "invalid");
   }
-  if (statSync(from).size > MAX_CONFIG_BYTES) return fail("too-large", `ファイルが大きすぎる（生のバイト数で ${MAX_CONFIG_BYTES.toLocaleString()} バイトまで）。これは読み込みの防御で、**kintone の壁ではない**（壁は圧縮後 256 KB）`, "invalid");
-  const text = readFileSync(from, "utf8");
 
-  // kSQL アクションの設定か（封筒の pluginID と形）。ここで落ちるものは写さない
+  let text: string;
   let appId = 0;
-  try {
-    const parsed = engine.api.parseImport(text, String(engine.api.pluginIdName), engine.api.CONFIG_SCHEMA) as { envelope: Record<string, unknown> };
-    appId = Number(parsed.envelope.appId ?? 0);
-  } catch (e) {
-    return fail("parse-failed", e instanceof Error ? e.message : String(e), "invalid");
+  const extra: Finding[] = [];
+
+  if (input.app !== undefined) {
+    /**
+     * **アプリ番号から直に読む**（APIラボ）。返るのは `setConfig` が入れたままのキーと値なので、
+     * ほどくのは**本体の `readStoredConfig`**（API 版 10）。封筒はこちらで付ける
+     * （設定画面のダウンロードと同じ形にして、以降の手順を変えないため）
+     */
+    const api = engine.api as { readStoredConfig?: (stored: Record<string, string>) => Promise<unknown>; buildExportData?: (...a: unknown[]) => unknown };
+    if (typeof api.readStoredConfig !== "function") {
+      return fail(
+        "api-too-old",
+        `この zip の authoring API（版 ${String(engine.api.apiVersion)}）には保存された設定をほどく口が無い（app で読むには版 10 以降が要る）。`
+        + "設定画面の［設定をダウンロード］→ `kact_pull`（`from`）で進めてください",
+        "incompatible",
+      );
+    }
+    const got = await fetchPluginConfig(
+      { app: input.app, ...(input.profile !== undefined ? { profile: input.profile } : {}), preview: input.production !== true },
+      // 接続は**起動の設定だけ**（AI の引数では変えない）。試験だけ fetchImpl を差し替える
+      { ...opt, ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}) },
+    );
+    if (got.status !== "ok" || !got.stored) return { status: got.status, findings: got.findings };
+    let body: unknown;
+    try {
+      body = await api.readStoredConfig(got.stored);
+    } catch (e) {
+      return fail("decode-failed", `保存された設定をほどけなかった: ${e instanceof Error ? e.message : String(e)}`, "invalid");
+    }
+    appId = input.app;
+    // 封筒は**本体の `buildExportData`**（引数は meta → data の順。設定画面のダウンロードと同じ形）
+    text = JSON.stringify(engine.api.buildExportData(
+      {
+        pluginName: "kSQL アクション",
+        pluginId: String(engine.api.pluginIdName),
+        pluginVersion: String(engine.api.pluginVersion),
+        appId,
+        appName: got.appName ?? "",
+      } as never,
+      body as never,
+    ));
+    extra.push({
+      level: "warning",
+      code: "from-api-lab",
+      message:
+        `アプリ ${appId}${got.appName ? `「${got.appName}」` : ""} の設定を kintone から直に読みました（**APIラボ**の口。`
+        + `${input.production === true ? "運用環境" : "動作テスト環境（設定画面が編集しているほう）"}）。`
+        + "**取り込みはこれまでどおり利用者が設定画面で行います**（ツールは kintone に書き込みません）",
+    });
+  } else {
+    let from: string;
+    try {
+      from = resolveInWorkspace(input.from as string);
+    } catch (e) {
+      return fromWorkspaceError(e);
+    }
+    if (statSync(from).size > MAX_CONFIG_BYTES) return fail("too-large", `ファイルが大きすぎる（生のバイト数で ${MAX_CONFIG_BYTES.toLocaleString()} バイトまで）。これは読み込みの防御で、**kintone の壁ではない**（壁は圧縮後 256 KB）`, "invalid");
+    text = readFileSync(from, "utf8");
+
+    // kSQL アクションの設定か（封筒の pluginID と形）。ここで落ちるものは写さない
+    try {
+      const parsed = engine.api.parseImport(text, String(engine.api.pluginIdName), engine.api.CONFIG_SCHEMA) as { envelope: Record<string, unknown> };
+      appId = Number(parsed.envelope.appId ?? 0);
+    } catch (e) {
+      return fail("parse-failed", e instanceof Error ? e.message : String(e), "invalid");
+    }
   }
 
   const to = input.to ?? `settings/APP${appId || "unknown"}.json`;
@@ -589,8 +657,8 @@ export async function pullConfig(input: PullInput, opt: LoadEngineOptions = {}):
       path: to,
       digest,
       summary: check.summary,
-      findings: check.findings,
-      message: `取り込んだ（元の ${input.from} は残している）。検査: ${check.status}${cleanup.length ? "。一時ファイルかロックを消せなかった" : ""}`,
+      findings: [...extra, ...check.findings],
+      message: `取り込んだ（${input.app !== undefined ? `アプリ ${appId} から直に読んだ` : `元の ${String(input.from)} は残している`}）。検査: ${check.status}${cleanup.length ? "。一時ファイルかロックを消せなかった" : ""}`,
     };
   } catch (e) {
     return fromCommitError(e);

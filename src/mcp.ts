@@ -491,17 +491,33 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
   server.registerTool(
     "kact_pull",
     {
-      title: "kact: ダウンロードした設定を取り込む",
+      title: "kact: 今の設定を取り込む（ファイルから、またはアプリから直に）",
       description:
-        "設定画面の［設定をダウンロード］で取った設定ファイルを、作業フォルダーに写す（直すときの元）。**元のファイルは残す**。" +
-        "kSQL アクションの設定でなければ写さない。写す先に同じ名前があれば conflict。",
+        "今のプラグイン設定を作業フォルダーに写す（直すときの元）。**from か app のどちらか一方**を渡す。" +
+        "**app**: アプリ番号から**kintone の設定を直に読む**（**APIラボ**の GET /k/v1/app/plugin/config.json。" +
+        "設定画面でダウンロードしてもらう往復が要らない。**APIラボが有効でないドメインでは使えない**ので、" +
+        "使えなければ findings でそう返す → from に切り替える）。既定は**動作テスト環境**（設定画面が編集しているほう）。" +
+        "**app には authoring API 版 10 以降の zip が要る**。" +
+        "**from**: 設定画面の［設定をダウンロード］で取ったファイルを写す（**元のファイルは残す**）。" +
+        "どちらも kSQL アクションの設定でなければ写さない。写す先に同じ名前があれば conflict。" +
+        "**どちらの道でも kintone には書き込まない**（取り込みは利用者が設定画面で行う）。",
       inputSchema: {
-        from: z.string().min(1).max(200).describe("ダウンロードしたファイル（作業フォルダーからの相対パス。例 inbox/kact-app1001.json）"),
+        from: z.string().min(1).max(200).optional().describe("ダウンロードしたファイル（作業フォルダーからの相対パス。例 inbox/kact-app1001.json）。app と同時には渡せない"),
+        app: z.number().int().positive().optional().describe("アプリ番号から直に読む（APIラボ。利用者に聞く。推測しない）。from と同時には渡せない"),
+        profile: z.string().min(1).max(40).optional().describe("app のときの接続の profile（省略すると defaultProfile）"),
+        production: z.boolean().optional().describe("app のとき、運用環境の設定を読む（既定は動作テスト環境 ＝ 設定画面が編集しているほう）"),
         to: z.string().min(1).max(200).optional().describe("写す先（省略すると settings/APP<アプリ ID>.json）"),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async ({ from, to }) => json(await pullConfig({ from, to }, zipOptions())),
+    async ({ from, app, profile, production, to }) =>
+      json(await pullConfig({
+        ...(from !== undefined ? { from } : {}),
+        ...(app !== undefined ? { app } : {}),
+        ...(profile !== undefined ? { profile } : {}),
+        ...(production !== undefined ? { production } : {}),
+        ...(to !== undefined ? { to } : {}),
+      }, { ...zipOptions(), ...kintoneOptions() })),
   );
 
   server.registerTool(
