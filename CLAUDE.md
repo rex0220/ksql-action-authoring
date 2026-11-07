@@ -58,6 +58,20 @@
 zip の読み取り（2 層・zip bomb・CRC の確認）、エンジンの読み込み（happy-dom、`moment` → `moment-timezone` → `bignumber` → `decimal` → 計算式エンジン → オーサリング API の順、`kintone` と `cybozu` のスタブ）、**ファイルの確定とロック**、**接続のファイルの読み取りと GET だけの REST** の作りは向こうが正本です（Codex のレビューを何度も通している）。
 直すときは向こうの変更も見る。
 
+## 設定画面だけの検査を「同じ規則」と書かない
+
+tools は **GET だけ**なので、設定画面の［保存する］と**まったく同じ規則にはならない**
+（2026-11-07 の Codex レビュー #8。資料が「設定画面の保存とまったく同じ規則」と書いていた）。
+書き込みを伴う検査は本体にしかできないので、**できる分だけ見て、見ていない分を findings で言う**:
+
+| 設定画面だけの検査 | tools の代わり |
+|---|---|
+| **ログアプリへの試し書き**（`connection-test.ts`。項目の型・読み書きの権限・`job_key` の重複禁止） | `log-app-unverified`（警告）。自アプリ指定（`log-app-self`）と領域の食い違い（`log-app-area`）だけは控えで見る |
+| **論理アプリの存在**（`checkBindingArea` の `pBindingMissing`） | 控えがあるアプリの**領域**だけ突き合わせる（`binding-area`。控えに無ければ `binding-area-unknown`） |
+
+**黙って飛ばさない**のが決まり（findings が空だと AI は「検査して問題なし」と読む）。
+新しく「本体だけができる検査」が増えたら、この表と `docs/config.md` の冒頭の表を両方直す。
+
 ## 計算式の検査は、本体の設定画面と 1 対 1 に保つ
 
 `src/core.ts` の `formulaSlots` / `checkFormulas` は、**本体の `ksql-action/src/config/dialogs.ts` の

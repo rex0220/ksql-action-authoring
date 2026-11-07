@@ -573,6 +573,122 @@ test("checkConfig: 一覧の「1 件ずつ」＋ テーブルの全置換は警�
 });
 
 /**
+ * 論理アプリの**領域**（ゲストスペース）が自アプリと違う（2026-11-07 の Codex レビュー #7）。
+ * 設定画面は保存の前に `checkBindingArea` で止める（fail-closed）のに、tools には検査が無く、
+ * **`kact_check` が `ok` でも取り込みで断られる設定**を作れた。
+ * 控えに領域を記録してあるので**通信せずに**突き合わせる。
+ */
+test("checkConfig: 論理アプリの領域が自アプリと違えばエラー", { skip }, async () => {
+  const build = (areas) => [envelope({
+    configVersion: 1, bindings: [{ name: "受注", appId: 1001 }, { name: "集計", appId: 1002 }],
+    limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+    timezone: "", appId: 1001,
+    actions: [{
+      enabled: true, code: "upd", name: "更新", description: "", type: "record", placements: ["detail_menu"],
+      showCond: "", execCond: "", execNgMessage: "", params: [], inputs: [],
+      sql: "-- @ksql dialect: 1\nUPDATE LAPP_集計 SET 件数 = 0 WHERE 顧客コード = 'A';",
+      staticInsertRows: 0, confirm: true, writeLimit: 10, allowed: [], allowAll: true, resultMessage: "",
+      listOnError: "continue", groupFormula: "", perRecordLock: false, prevRecord: false,
+    }],
+  }), { pluginZip: ZIP, appId: 1001, appAreas: areas }];
+
+  // 自アプリは通常領域、集計はゲストスペース 7 → エラー（設定画面の保存でも止まる）
+  const cross = await core.checkConfig(...build({
+    1001: { profile: "dev", guestSpaceId: null },
+    1002: { profile: "dev", guestSpaceId: 7 },
+  }));
+  const e = cross.findings.find((f) => f.code === "binding-area");
+  assert.ok(e, JSON.stringify(cross.findings));
+  assert.equal(e.level, "error");
+  assert.equal(cross.status, "invalid");
+  assert.match(e.message, /ゲストスペース 7/);
+
+  // 同じ領域どうしなら出さない（通常領域どうし・同じゲストスペースどうし）
+  for (const area of [null, 7]) {
+    const same = await core.checkConfig(...build({
+      1001: { profile: "dev", guestSpaceId: area },
+      1002: { profile: "dev", guestSpaceId: area },
+    }));
+    assert.equal(same.findings.filter((f) => f.code === "binding-area").length, 0, JSON.stringify(same.findings));
+    assert.equal(same.findings.filter((f) => f.code === "binding-area-unknown").length, 0, JSON.stringify(same.findings));
+  }
+
+  // 領域を記録する前の古い控え（`guestSpaceId` が無い）→ 黙って飛ばさず、確かめていないと知らせる
+  const old = await core.checkConfig(...build({
+    1001: { profile: "dev" },
+    1002: { profile: "dev" },
+  }));
+  const u = old.findings.find((f) => f.code === "binding-area-unknown");
+  assert.ok(u, JSON.stringify(old.findings));
+  assert.equal(u.level, "warning", "警告止まり（控えが古いだけで編集不能にしない）");
+  assert.match(u.message, /kact_fields/);
+
+  // **接続先が違う控えどうしは比べない**（別のドメインの同じ番号は別のアプリ）
+  const other = await core.checkConfig(...build({
+    1001: { profile: "dev", guestSpaceId: null },
+    1002: { profile: "prod", guestSpaceId: 7 },
+  }));
+  assert.equal(other.findings.filter((f) => f.code === "binding-area").length, 0, JSON.stringify(other.findings));
+  assert.ok(other.findings.some((f) => f.code === "binding-area-unknown"), JSON.stringify(other.findings));
+
+  // 控えを渡さなければ何も言わない（この口を使わない呼び方を壊さない）
+  const none = await core.checkConfig(...build(undefined));
+  assert.equal(none.findings.filter((f) => f.code.startsWith("binding-area")).length, 0, JSON.stringify(none.findings));
+});
+
+/**
+ * ログアプリ（2026-11-07 の Codex レビュー #8）。
+ * 設定画面の［保存する］はログアプリに**実際に 1 件書いて**診断する（項目の型・読み書きの権限・
+ * `job_key` の重複禁止）。tools は GET だけなので**同じ規則にはならない**。
+ * できる分（自アプリを指していないか・領域が控えと合っているか）だけ見て、
+ * **見ていない分を黙らない**（findings が空だと「検査して問題なし」と読まれる）。
+ */
+test("checkConfig: ログアプリは確かめていないと言う（自アプリ指定はエラー）", { skip }, async () => {
+  const build = (logApp, areas) => [envelope({
+    configVersion: 1, bindings: [], appId: 1001,
+    limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+    timezone: "", ...(logApp ? { logApp } : {}),
+    actions: [{
+      enabled: true, code: "upd", name: "更新", description: "", type: "record", placements: ["detail_menu"],
+      showCond: "", execCond: "", execNgMessage: "", params: [], inputs: [],
+      sql: "-- @ksql dialect: 1\nUPDATE LAPP_自分 SET 件数 = 0 WHERE $id = 1;",
+      staticInsertRows: 0, confirm: true, writeLimit: 10, allowed: [], allowAll: true, resultMessage: "",
+      listOnError: "continue", groupFormula: "", perRecordLock: false, prevRecord: false,
+    }],
+  }), { pluginZip: ZIP, appId: 1001, ...(areas ? { appAreas: areas } : {}) }];
+
+  const log = { appId: 2002, guestSpaceId: 0, profile: "", viewId: 0, panelLog: false, panelLogOpen: false, panelLogCount: 20, panelLogRefreshMin: 0 };
+
+  // ログアプリを指定していれば「確かめていない」と言う（保存は止めない）
+  const set = await core.checkConfig(...build(log));
+  const u = set.findings.find((f) => f.code === "log-app-unverified");
+  assert.ok(u, JSON.stringify(set.findings));
+  assert.equal(u.level, "warning");
+  assert.match(u.message, /job_key/);
+
+  // 指定していなければ何も言わない
+  const none = await core.checkConfig(...build(null));
+  assert.equal(none.findings.filter((f) => f.code.startsWith("log-app")).length, 0, JSON.stringify(none.findings));
+
+  // 自アプリをログアプリにしたらエラー（設定画面の pLogAppSelf と対。スキーマは appId >= 1 しか見ない）
+  const self = await core.checkConfig(...build({ ...log, appId: 1001 }));
+  const e = self.findings.find((f) => f.code === "log-app-self");
+  assert.ok(e, JSON.stringify(self.findings));
+  assert.equal(e.level, "error");
+  assert.equal(self.status, "invalid");
+
+  // 控えが領域を知っていれば、guestSpaceId の食い違いを言う（手で書いた設定だけがずれる）
+  const areas = { 2002: { profile: "dev", guestSpaceId: 7 } };
+  const bad = await core.checkConfig(...build(log, areas));
+  assert.ok(bad.findings.some((f) => f.code === "log-app-area"), JSON.stringify(bad.findings));
+  const good = await core.checkConfig(...build({ ...log, guestSpaceId: 7 }, areas));
+  assert.equal(good.findings.filter((f) => f.code === "log-app-area").length, 0, JSON.stringify(good.findings));
+  // 控えが古くて領域を知らなければ言わない（知らないことを間違いとして出さない）
+  const old = await core.checkConfig(...build(log, { 2002: { profile: "dev" } }));
+  assert.equal(old.findings.filter((f) => f.code === "log-app-area").length, 0, JSON.stringify(old.findings));
+});
+
+/**
  * 版 9（2026-11-07）: 検査の文が**設定画面と同じ文**になる。
  * それまでは `detail` と `kind` を素で並べるしかなく、`pInputTypeMismatch` が
  * **`"min / text"`** という読めない findings になっていた（試用 S4 の指摘）。

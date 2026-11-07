@@ -20,7 +20,7 @@ import { checkConfig,
   explainAction, listActions, statusOf } from "./core.ts";
 import { resolveInWorkspace, workspaceStatus, WorkspaceError } from "./workspace.ts";
 import { deleteAction, digestOf, filesOf, pullConfig, saveConfig, updateAction } from "./save.ts";
-import { appsFieldsFrom, connectionReport, fetchFields, findFieldsFile, listApps, listViews, type KintoneOptions } from "./fields.ts";
+import { appAreasFrom, appsFieldsFrom, connectionReport, fetchFields, findFieldsFile, listApps, listViews, type KintoneOptions } from "./fields.ts";
 import { diffConfigs } from "./diff.ts";
 import { tryFormulas } from "./try.ts";
 import { toolsMeta } from "./meta.ts";
@@ -71,6 +71,7 @@ function checkOptions(text: string): {
   appId?: number;
   fieldsPath?: string;
   fieldsOthers?: string[];
+  appAreas?: Record<string, { profile: string; guestSpaceId?: number | null }>;
 } {
   const base = zipOptions();
   let appId = 0;
@@ -81,7 +82,12 @@ function checkOptions(text: string): {
     return base;
   }
   const appsFields = appsFieldsFrom(text, appId);
-  const withApps = Object.keys(appsFields).length > 0 ? { appsFields } : {};
+  // 領域（ゲストスペース）の突き合わせ（`binding-area`）。項目定義とは別の口（`properties` を持たない控えもある）
+  const appAreas = appAreasFrom(text, appId);
+  const withApps = {
+    ...(Object.keys(appsFields).length > 0 ? { appsFields } : {}),
+    ...(Object.keys(appAreas).length > 0 ? { appAreas } : {}),
+  };
   if (!Number.isSafeInteger(appId) || appId <= 0) return { ...base, ...withApps };
   const found = findFieldsFile(appId);
   return found

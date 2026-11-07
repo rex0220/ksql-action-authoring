@@ -420,13 +420,31 @@ export interface CheckOptions extends LoadEngineOptions {
    * （2026-11-07 の試用 S4 の再実施で見つけた。API 版 8 の検査が一度も鳴っていなかった）。
    */
   appsFields?: Record<string, Record<string, unknown>>;
+  /**
+   * 設定が触るアプリの**領域**（`アプリ番号 → { profile, guestSpaceId }`。`kact_fields` の控えから）。
+   *
+   * 業務アプリは**自アプリと同じ領域**（通常領域どうし・同じゲストスペースどうし）だけ使える。
+   * 設定画面は保存の前に `checkBindingArea`（`ksql-action/src/config/screen.ts`）で止めるが、
+   * tools には同じ検査が無かったので、**取り込んではじめて断られる設定**を作れた
+   * （2026-11-07 の Codex レビュー #7）。控えに `guestSpaceId` を記録してあるので**通信せずに**突き合わせる。
+   * 古い控えには入っていないので、そのときは「確かめられなかった」と知らせる（黙って通さない）
+   */
+  appAreas?: Record<string, { profile: string; guestSpaceId?: number | null }>;
 }
 
 /**
- * 設定ファイルの検査（kact_check）。**設定画面の保存と同じ規則**を zip の API で通す。
+ * 設定ファイルの検査（kact_check）。設定画面の保存と同じ規則を**zip の API で**通す
+ * （規則を写さない。写すと本物とずれる）。
  * - 形（CONFIG_SCHEMA）と横断の検査（validateConfig）
  * - アクションごとに SQL の検査（checkActionSql。注意も返す）
  * - 計算式は、項目定義（`fields`）を渡せば**設定画面の保存と同じ検査**、無ければ**構文だけ**（`checkFormulas`）
+ *
+ * **「まったく同じ」ではない**（2026-11-07 の Codex レビュー #8。資料がそう書いていた）。
+ * 設定画面の［保存する］は**kintone に書き込んで**診断する分があり、tools は GET だけなのでできない:
+ * - **ログアプリへの試し書き**（`connection-test.ts`。項目の型・読み書きの権限・`job_key` の重複禁止）
+ *   → 代わりに `log-app-unverified` で「見ていない」と言う（`logAppFindings`）
+ * - **論理アプリの存在**（`checkBindingArea` の `pBindingMissing`）
+ *   → 控えがあるアプリの**領域**だけ突き合わせる（`bindingAreaFindings`）
  */
 export async function checkConfig(text: string, opt: CheckOptions = {}): Promise<CheckResult> {
   let engine: Engine;
@@ -517,6 +535,12 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
   // 2d 一覧の「1 件ずつ」のままテーブルを全置換している（2026-11-07 の試用 S5）。
   // 既定が "loop" なので、渡し方を書き忘れただけでこの形になる
   for (const f of listApplyLoopFindings(actions)) findings.push(f);
+  // 2e 論理アプリの**領域**（ゲストスペース）が自アプリと同じか（2026-11-07 の Codex レビュー #7）。
+  // 設定画面は保存の前に `checkBindingArea` で止めるので、ここで気づけないと取り込みまで失敗が遅れる
+  for (const f of bindingAreaFindings(bindings, opt, envelope)) findings.push(f);
+  // 2f ログアプリ（2026-11-07 の Codex レビュー #8）。設定画面は保存の前に**本物の書き込みで**
+  // 診断するので、tools の検査は同じ規則ではない。できる分だけ見て、見ていない分を言う
+  for (const f of logAppFindings(config, opt, envelope)) findings.push(f);
   /**
    * 控えの項目定義から作る client（API 版 3 の `createFieldsClient`）。**通信しない**（手元の
    * `properties` を返すだけ）。これを `checkActionSql` に渡すと、選択肢の定義に無い値
@@ -955,6 +979,139 @@ export function listApplyLoopFindings(actions: Array<Record<string, unknown>>): 
       actionCode: String(action.code ?? ""),
     });
   }
+  return out;
+}
+
+/**
+ * 論理アプリの**領域**（通常領域 / ゲストスペース）が自アプリと同じか
+ * （2026-11-07 の Codex レビュー #7）。
+ *
+ * 実行時の接続（`KintoneRestAPIClient`）は**画面の領域**を使うので、別の領域のアプリは
+ * そもそも読めない。設定画面は保存の前に `checkBindingArea`
+ * （`ksql-action/src/config/screen.ts`）で止めるが、tools には同じ検査が無かったので
+ * **`kact_check` が `ok` でも取り込みで断られる設定**を作れた。
+ *
+ * 控え（`kact_fields`）に `guestSpaceId` を記録してあるので**通信せずに**突き合わせる。
+ * 控えが無い・古くて領域が入っていないアプリは「**確かめられなかった**」と知らせる
+ * （findings が空だと AI は「検査して問題なし」と読むので、黙って飛ばさない）。
+ */
+export function bindingAreaFindings(
+  bindings: Array<{ name: string; appId: number }>,
+  opt: CheckOptions,
+  envelope: Record<string, unknown>,
+): Finding[] {
+  const areas = opt.appAreas;
+  if (!areas || Object.keys(areas).length === 0) return [];
+  const out: Finding[] = [];
+  const selfId = String(Number(opt.appId ?? envelope.appId ?? 0));
+  const self = areas[selfId];
+  const name = (v: number | null | undefined): string =>
+    v === null || v === undefined ? "通常領域（ゲストスペースの外）" : `ゲストスペース ${v}`;
+  const unknown: string[] = [];
+  if (!self || self.guestSpaceId === undefined) unknown.push(`自アプリ（${selfId}）`);
+  for (const b of bindings) {
+    const id = String(Number(b.appId ?? 0));
+    if (id === selfId) continue;
+    const got = areas[id];
+    if (!got || got.guestSpaceId === undefined) {
+      unknown.push(`${b.name}（${id}）`);
+      continue;
+    }
+    if (!self || self.guestSpaceId === undefined) continue;
+    // **接続先が違う控えどうしは比べない**（別のドメインの同じ番号は別のアプリ。
+    // ゲストスペースの番号を突き合わせても意味が無い）
+    if (got.profile !== self.profile) {
+      unknown.push(`${b.name}（${id}。控えの接続先が自アプリと違う: ${got.profile} / ${self.profile}）`);
+      continue;
+    }
+    if ((got.guestSpaceId ?? null) !== (self.guestSpaceId ?? null)) {
+      out.push({
+        level: "error",
+        code: "binding-area",
+        message:
+          `論理アプリ「${b.name}」（アプリ ${id}）は**自アプリと領域が違います**`
+          + `（自アプリ: ${name(self.guestSpaceId)} / このアプリ: ${name(got.guestSpaceId)}）。`
+          + "業務アプリに選べるのは**自アプリと同じ領域**のアプリだけです"
+          + "（通常領域どうし・同じゲストスペースどうし。実行時の接続は画面の領域を使うため、別の領域のアプリは読めません）。"
+          + "**設定画面の［保存する］でも同じところで止まります**",
+      });
+    }
+  }
+  if (unknown.length > 0) {
+    out.push({
+      level: "warning",
+      code: "binding-area-unknown",
+      message:
+        `領域（ゲストスペース）を確かめられなかったアプリがあります（${unknown.join(" / ")}）。`
+        + "`kact_fields` で項目定義を取り直すと確かめられます（古い控えには領域が入っていません）。"
+        + "**業務アプリは自アプリと同じ領域のものだけ**使えて、設定画面の［保存する］では領域が検査されます",
+    });
+  }
+  return out;
+}
+
+/**
+ * ログアプリ（§4.1）。**tools は本物の書き込みができない**ので、設定画面の保存とは検査が違う
+ * （2026-11-07 の Codex レビュー #8。資料が「設定画面の保存とまったく同じ規則」と書いていた）。
+ *
+ * 設定画面の［保存する］は、ログアプリを指定していると**実際に 1 件書いて**診断する
+ * （`ksql-action/src/config/connection-test.ts`。項目の型が配布テンプレートと合うか・
+ * 保存する人の権限で読み書きできるか・`job_key` に重複禁止があるか）。
+ * tools は GET だけなので、**ここを通ったからといって設定画面の保存が通るとは限らない**。
+ *
+ * できるのは、通信の要らない次の 2 つ:
+ * - **自アプリをログアプリにしている**（設定画面は `pLogAppSelf` で断る。スキーマは `appId >= 1` しか見ない）
+ * - 控えが領域を知っていれば、`logApp.guestSpaceId` が**その領域と合っているか**
+ *   （設定画面は選んだときに自動で入れるので、手で書いた設定だけがずれる）
+ */
+export function logAppFindings(
+  config: Record<string, unknown>,
+  opt: CheckOptions,
+  envelope: Record<string, unknown>,
+): Finding[] {
+  const logApp = config.logApp as { appId?: unknown; guestSpaceId?: unknown } | undefined;
+  if (!logApp || typeof logApp !== "object") return [];
+  const appId = Number(logApp.appId ?? 0);
+  if (!Number.isSafeInteger(appId) || appId <= 0) return []; // 形はスキーマが見る
+  const out: Finding[] = [];
+  const selfId = Number(opt.appId ?? envelope.appId ?? 0);
+  if (appId === selfId) {
+    out.push({
+      level: "error",
+      code: "log-app-self",
+      message:
+        `ログアプリに**自アプリ（${appId}）を指定しています**。`
+        + "ログアプリは別のアプリ（配布している「kSQL アクション 実行ログ」のテンプレートから作ったもの）にしてください"
+        + "（**設定画面の［保存する］でも断られます**）",
+    });
+  }
+  const area = opt.appAreas?.[String(appId)];
+  if (area && area.guestSpaceId !== undefined) {
+    const wrote = Number(logApp.guestSpaceId ?? 0);
+    const actual = area.guestSpaceId ?? 0;
+    if (wrote !== actual) {
+      out.push({
+        level: "warning",
+        code: "log-app-area",
+        message:
+          `ログアプリ（アプリ ${appId}）の \`guestSpaceId\` が控えと合いません`
+          + `（設定: ${wrote} / 控え: ${actual}）。`
+          + "この値はログを書くときの接続先の URL に使うので、違っていると**ログが書けません**"
+          + "（設定画面はアプリを選ぶと自動で入れるので、手で書いた値だけがずれます）",
+      });
+    }
+  }
+  out.push({
+    level: "warning",
+    code: "log-app-unverified",
+    message:
+      `ログアプリ（アプリ ${appId}）そのものは**確かめていません**。`
+      + "tools は読み取りしかしないので、**項目の型が配布テンプレートと合っているか・"
+      + "設定を保存する人が読み書きできるか・`job_key` に「値の重複を禁止する」があるか**は見ていません。"
+      + "設定画面の［保存する］はログアプリに**実際に 1 件書いて**これを診断するので、"
+      + "**取り込んだ後にここで断られることがあります**。"
+      + "配布している「kSQL アクション 実行ログ」のアプリテンプレートから作ったアプリを指定してください",
+  });
   return out;
 }
 

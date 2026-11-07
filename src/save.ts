@@ -15,7 +15,7 @@ import { acquireLock, cleanupAll, placeNew, tempPathFor, withRetry, FileExistsEr
 import { loadEngine, type Engine, type LoadEngineOptions } from "./engine.ts";
 import { checkConfig, type CheckOptions, type Finding, type ToolStatus } from "./core.ts";
 import { actionDiff } from "./diff.ts";
-import { appsFieldsFrom, findFieldsFile } from "./fields.ts";
+import { appAreasFrom, appsFieldsFrom, findFieldsFile } from "./fields.ts";
 import { listWorkspaceFiles, MAX_CONFIG_BYTES, resolveInWorkspace, resolveNewInWorkspace, workspaceDir, WorkspaceError, type WorkspaceFile } from "./workspace.ts";
 
 /** 封筒のキー（これ以外が設定の本体） */
@@ -177,7 +177,12 @@ function withFields(text: string, opt: CheckOptions): CheckOptions {
    * 無いと、選択肢の定義に無い値の検査（`choice-unknown`。API 版 8）が黙って何もしない
    */
   const appsFields = opt.appsFields ?? appsFieldsFrom(text, appId);
-  const withApps = Object.keys(appsFields).length > 0 ? { appsFields } : {};
+  // 領域（ゲストスペース）の突き合わせ（`binding-area`）も控えから。通信しない
+  const appAreas = opt.appAreas ?? appAreasFrom(text, appId);
+  const withApps = {
+    ...(Object.keys(appsFields).length > 0 ? { appsFields } : {}),
+    ...(Object.keys(appAreas).length > 0 ? { appAreas } : {}),
+  };
   if (!Number.isSafeInteger(appId) || appId <= 0) return { ...opt, ...withApps };
   const found = findFieldsFile(appId);
   return found

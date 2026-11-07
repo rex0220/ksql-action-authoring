@@ -86,6 +86,31 @@ export function appsFieldsFrom(text: string, alsoAppId = 0): Record<string, Reco
   return out;
 }
 
+/**
+ * 設定が触るアプリの**領域**（`アプリ番号 → { profile, guestSpaceId }`）を控えから集める。
+ * **通信しない**。`guestSpaceId` が `undefined` の行は、領域を記録する前の古い控え。
+ */
+export function appAreasFrom(text: string, alsoAppId = 0): Record<string, { profile: string; guestSpaceId?: number | null }> {
+  const out: Record<string, { profile: string; guestSpaceId?: number | null }> = {};
+  const add = (id: number): void => {
+    if (!Number.isSafeInteger(id) || id <= 0 || out[String(id)]) return;
+    const hit = findFieldsFile(id);
+    if (hit) out[String(id)] = { profile: hit.file.profile, guestSpaceId: hit.file.guestSpaceId };
+  };
+  try {
+    const parsed: unknown = JSON.parse(text);
+    const obj = parsed && typeof parsed === "object" ? (parsed as { bindings?: unknown; logApp?: unknown }) : undefined;
+    if (Array.isArray(obj?.bindings)) for (const b of obj.bindings) add(Number((b as { appId?: unknown })?.appId ?? 0));
+    // ログアプリも領域を使う（`logApp.guestSpaceId` が控えと合っているか見る。`logAppFindings`）
+    const logApp = obj?.logApp;
+    if (logApp && typeof logApp === "object") add(Number((logApp as { appId?: unknown }).appId ?? 0));
+  } catch {
+    // 封筒が読めなければ自アプリの分だけ
+  }
+  add(alsoAppId);
+  return out;
+}
+
 /** 一覧で集めるアプリの上限（大きなドメインで延々と読まない。超えたら「続きがある」と伝える） */
 const MAX_APPS = 500;
 
@@ -114,6 +139,16 @@ export interface FieldsFile {
   revision: string;
   /** 動作テスト環境（保存して未反映）の定義か */
   preview: boolean;
+  /**
+   * 取ったときの**領域**（ゲストスペース ID。通常領域は `null`）。
+   *
+   * 業務アプリは**自アプリと同じ領域**だけ使える（仕様 §4.1。実行時の client は画面の API 領域を使うので、
+   * 別領域を登録すると**設定は通るのに実行してはじめて失敗する**）。設定画面は保存前に
+   * `checkBindingArea` で見るが、tools には同じ検査が無かった（2026-11-07 の Codex レビュー）。
+   * 控えに持たせておけば、**通信せずに**自アプリと論理アプリの領域を突き合わせられる。
+   * 古い控えには無いので、そのときは「確かめていない」と伝える。
+   */
+  guestSpaceId?: number | null;
   properties: Record<string, FieldProperty>;
 }
 
@@ -433,6 +468,7 @@ export async function fetchFields(input: { app: number; profile?: string; previe
     appName: String(app.name ?? ""),
     revision: String(form.revision ?? ""),
     preview: !!input.preview,
+    guestSpaceId: def.guestSpaceId ?? null,
     properties,
   };
   // 動作テスト環境は別のファイル（運用環境の控えを上書きしない）
