@@ -393,7 +393,7 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
       description:
         "接続のファイルの profile で見えるアプリの一覧（番号・名前・スペース）を**読み取り（GET）だけ**で返す。kintone は 1 回に 100 件までだが、**続きはツールが読んで集める**（既定 500 件まで。切れたら findings で伝える）。" +
         "**名前が分かっているなら name（部分一致）で絞る**ほうが速く確実。**ログイン名とパスワードの接続でだけ**使える（API トークンはアプリごとの鍵なので一覧は読めない）。" +
-        "どのアプリを使うかは一覧から推測せず、**利用者に確かめる**。",
+        "**これは利用者がアプリを特定できないときの道具**。どのアプリかは**探す前に聞く**（名前でも番号でもよい）。一覧から推測せず、候補を出したら**どう絞ったかを言って利用者に選ばせる**（1 件でも決めない）。",
       inputSchema: {
         profile: z.string().min(1).max(40).optional().describe("接続のファイルの profile（省略すると defaultProfile）"),
         name: z.string().min(1).max(64).optional().describe("名前で絞る（部分一致）。**番号の大きいアプリは先頭 100 件に入らないので、名前で絞る**"),
