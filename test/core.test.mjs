@@ -642,3 +642,51 @@ test("checkConfig: 古い `_result_*` には改名を案内する", { skip }, as
   const now = await core.checkConfig(build('"済みました（" & $result_total & " 件）"'), opt);
   assert.equal(now.findings.filter((x) => x.code === "pFormulaField").length, 0, JSON.stringify(now.findings));
 });
+
+// 2026-11-07 の試用 S10: 共通の文（messages。API 版 7）を使う設定が 1 つも保存できなかった。
+// `contextsFrom` が `loadFormulaContext` に messages を渡しておらず、`$m_…` の擬似項目が
+// 1 つも無い状態で式を検査していたため、**正しく定義したコードまで**「無い項目」で止まった。
+// 本体の設定画面は 2026-11-06 に同じ穴を setMessages で直している（screen.ts の注記）
+test("checkConfig: 共通の文（$m_…）は messages に定義してあれば通る", { skip }, async () => {
+  const build = (messages) => envelope({
+    configVersion: 1, bindings: [{ name: "受注", appId: 1001 }],
+    limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+    timezone: "",
+    ...(messages ? { messages } : {}),
+    panel: { title: "", sectionColumns: 1, buttonWidth: 200, buttonLogLink: false, sections: [], views: [{ viewId: "*", sections: [""], menus: [], open: false }] },
+    actions: [{
+      enabled: true, code: "msg", name: "共通の文を使う", description: "", type: "record", onList: false,
+      placements: ["detail_menu"], panelSection: "", showCond: "", execCond: "金額 <> \"\"",
+      execNgMessage: "$m_no_amount",
+      resultMessage: "REPLACE($m_done, \"{n}\", $result_total)",
+      params: [], inputs: [], sql: "-- @ksql dialect: 1\nDECLARE @_record = 0;\nUPDATE LAPP_受注 SET 処理メモ = 'x' WHERE $id = @_record;",
+      staticInsertRows: 0, confirm: true, writeLimit: 1, refreshPrompt: "auto", allowed: [], allowAll: true,
+      listOnError: "continue", selectionMode: "loop", groupFormula: "", loop: "", loopOnError: "stop",
+      perRecordLock: false, prevRecord: false,
+    }],
+  });
+  const fields = {
+    金額: { type: "NUMBER", code: "金額", label: "金額" },
+    処理メモ: { type: "SINGLE_LINE_TEXT", code: "処理メモ", label: "処理メモ" },
+  };
+  const opt = { pluginZip: ZIP, fields, appId: 1001 };
+  const messages = [
+    { code: "m_no_amount", text: "金額が空です" },
+    { code: "m_done", text: "{n} 件を書き込みました" },
+  ];
+
+  // 定義してあれば通る（ここが落ちていた）
+  const ok = await core.checkConfig(build(messages), opt);
+  assert.equal(ok.status, "ok", JSON.stringify(ok.findings));
+  assert.equal(ok.findings.filter((f) => f.code === "pFormulaField").length, 0, JSON.stringify(ok.findings));
+
+  // 定義が無ければ今までどおり止まる（守りは残す）
+  const ng = await core.checkConfig(build(undefined), opt);
+  assert.equal(ng.status, "invalid");
+  assert.ok(ng.findings.some((f) => String(f.message).includes("message:unknown")), JSON.stringify(ng.findings));
+  // 「項目も関数も無い」だけだと打ち間違いに見えるので、共通の文の話だと添える
+  const hint = ng.findings.find((f) => f.code === "pFormulaField");
+  assert.ok(hint, JSON.stringify(ng.findings));
+  assert.match(hint.message, /\u5171\u901a\u306e\u6587/);
+  assert.match(hint.message, /execNgMessage/);
+});

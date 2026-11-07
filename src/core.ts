@@ -151,13 +151,16 @@ interface FormulaSlot {
   param?: true;
   keys?: true;
   input?: true;
+  /** 共通の文（`$m_…`）を書ける口（本体の `formulaContext.message(base)` を使う） */
+  message?: true;
 }
 
 function formulaSlots(action: Record<string, unknown>): Array<FormulaSlot> {
   const slots: FormulaSlot[] = [
     { where: "showCond（表示条件）", raw: String(action.showCond ?? "") },
     { where: "execCond（実行条件）", raw: String(action.execCond ?? "") },
-    { where: "execNgMessage（実行条件 NG のメッセージ）", raw: String(action.execNgMessage ?? "") },
+    // 共通の文を書ける口（本体は `formulaContext.message(base)` で検査する）
+    { where: "execNgMessage（実行条件 NG のメッセージ）", raw: String(action.execNgMessage ?? ""), message: true },
     { where: "groupFormula（分ける式）", raw: String(action.groupFormula ?? "") },
     { where: "resultMessage（結果メッセージ）", raw: String(action.resultMessage ?? "") },
     /**
@@ -194,7 +197,8 @@ function formulaSlots(action: Record<string, unknown>): Array<FormulaSlot> {
     // 選択肢の値とラベルの式（2026-11-05 に本体へ足した。型が選択肢のときだけ効く）
     if (i.type === "select") {
       slots.push({ where: `${at} の選択肢の値`, raw: String(i.optionsFormula ?? ""), input: true });
-      slots.push({ where: `${at} の選択肢のラベル`, raw: String(i.optionLabelsFormula ?? ""), input: true });
+      // 選択肢のラベルも共通の文を書ける口（本体の dialogs.ts と同じ）
+      slots.push({ where: `${at} の選択肢のラベル`, raw: String(i.optionLabelsFormula ?? ""), input: true, message: true });
     }
   }
   return slots.filter((s) => s.raw.trim() !== "");
@@ -224,6 +228,14 @@ export interface FormulaContexts {
    * （`loop` の章が勧める `"formula": "2017 + $val"` がそのまま弾かれる）
    */
   loopParam?: (base: "record" | "none") => { pp: unknown; crec: unknown };
+  /**
+   * **共通の文を書ける口の文脈**（`$m_…` が使える。本体の `formula-check.ts` の `message`）。
+   * 本体の設定画面は `execNgMessage` と `inputs[].optionLabelsFormula` にこれを使う
+   * （`ksql-action/src/config/dialogs.ts`）。**ここを使っていなかったので、
+   * `messages` に正しく定義した `$m_…` を NG の文に書くと tools だけが拒んでいた**
+   * （2026-11-07 の試用 S10）。`resultMessage` は `result` 側が `$m_…` も足すので別口。
+   */
+  message?: (base: "record" | "none") => { pp: unknown; crec: unknown };
 }
 
 /**
@@ -231,9 +243,24 @@ export interface FormulaContexts {
  * ところを写さないため）。`loadFormulaContext` は `/k/v1/preview/app/form/fields` を 1 回だけ読むので、
  * kintone に行かず控え（`kact_fields` が置いた properties）を返す偽の client を渡す。
  */
-export async function contextsFrom(engine: Engine, properties: Record<string, unknown>, appId: number): Promise<FormulaContexts> {
+export async function contextsFrom(
+  engine: Engine,
+  properties: Record<string, unknown>,
+  appId: number,
+  /**
+   * **共通の文（`messages`）を必ず渡す**（§8.4。API 版 7）。
+   *
+   * 渡さないと `$m_…` の擬似項目が 1 つも無い状態で式を検査することになり、
+   * **`messages` に正しく定義してある `$m_…` まで「無い項目」で止まる**
+   * （＝ 共通の文を使う設定は、ツールからは 1 つも保存できない）。
+   * 本体の設定画面は 2026-11-06 に同じ穴を踏んで `setMessages` で直したが
+   * （`ksql-action/src/config/screen.ts` の注記）、**こちらには入っていなかった**
+   * （2026-11-07 の試用 S10 で発覚）。
+   */
+  messages?: unknown,
+): Promise<FormulaContexts> {
   const client = { api: async () => ({ properties }) };
-  return (await engine.api.loadFormulaContext(client as never, appId)) as unknown as FormulaContexts;
+  return (await engine.api.loadFormulaContext(client as never, appId, messages)) as unknown as FormulaContexts;
 }
 
 /** 項目定義が無い文脈でも分かる誤り（= 構文）だけを拾う。項目名・関数名の誤りは「項目が無い」と同じ形で出るので除く */
@@ -286,7 +313,10 @@ function checkFormulas(engine: Engine, actions: Array<Record<string, unknown>>, 
           ? contexts.result(base)
           : slot.where.startsWith("groupFormula")
             ? contexts.record // 分ける式はレコードごとに評価する（本体の groupContext）
-            : slot.input
+            : slot.message && contexts.message
+              // 共通の文を書ける口（NG の文・選択肢のラベル）。本体の dialogs.ts と同じ文脈
+              ? contexts.message(slot.input ? inputBase : base)
+              : slot.input
               ? contexts[inputBase] // 入力の式はループ値を使えない（聞くのはループの前に 1 回）
               : slot.param
                 ? paramContext(slot.keys === true) // パラメーターの式だけ $val / $lno が使える
@@ -470,7 +500,8 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
       findings.push({ level: "warning", code: "fields-no-app", message: "項目定義を渡されたが自アプリの番号が分からないので、計算式は構文だけ見た" });
     } else {
       try {
-        contexts = await contextsFrom(engine, opt.fields, appId);
+        // 共通の文を渡す（渡さないと `$m_…` が「無い項目」になる。`contextsFrom` の注記）
+        contexts = await contextsFrom(engine, opt.fields, appId, config.messages);
       } catch (e) {
         findings.push({ level: "warning", code: "fields-context-failed", message: `項目定義から計算式の文脈を作れなかったので構文だけ見た: ${e instanceof Error ? e.message : String(e)}` });
       }
@@ -771,6 +802,18 @@ function renameHint(name: string): string {
   }
   if (/^_(val|lno)$/i.test(name) || /^\$?(val|lno)$/i.test(name)) {
     return "。**`$val` / `$lno` はループ（`loop`）のパラメーターの式だけ**で使えます（ほかの口に書くと「項目が無い」になります。`kact_docs` の section loop）";
+  }
+  /**
+   * 共通の文（§8.4。API 版 7）。コードが未定義か、書けない口に書いたときに
+   * `message:unknown` / `message:slot` と**一緒に**この誤りが出る（文脈に `$m_…` が無いため）。
+   * 「項目も関数も無い」だけだと項目コードの打ち間違いに見えるので、何の話かを添える
+   * （2026-11-07 の試用 S10）。
+   */
+  if (/^\$?m_/i.test(name)) {
+    return "。**共通の文（`messages`）のコード**です。"
+      + "書けるのは **`execNgMessage` / `resultMessage` / `inputs[].optionLabelsFormula` の 3 つの口だけ**で、"
+      + "**文そのものはツールからは足せません**（設定画面のツールバーの［メッセージ］で足してもらってください。"
+      + "今あるコードは `kact_actions` の返りの `messages` で分かります）";
   }
   return "";
 }
