@@ -442,7 +442,7 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
     };
     const at = { actionIndex: i + 1, actionCode: String(action.code ?? "") };
     for (const p of r.problems) {
-      findings.push({ level: "error", code: p.code, message: [p.detail, p.index ? `文 ${p.index}` : "", p.kind].filter(Boolean).join(" / ") || p.code, ...at });
+      findings.push({ level: "error", code: p.code, message: problemMessage(engine, p), ...at });
     }
     for (const w of r.warnings) findings.push({ level: "warning", code: w.code, message: w.message, ...at });
     /**
@@ -870,4 +870,31 @@ export async function listActions(
 /** ファイルから読む版（CLI と MCP の入口で使う。パスの検査は呼び出し側） */
 export function readTextFile(file: string): string {
   return readFileSync(file, "utf8");
+}
+
+/**
+ * 検査の問題を人が読める 1 行にする。
+ *
+ * **API 版 9 の zip では本体の `sqlProblemText` に作らせる**（設定画面に出る文と 1 字も違わない。
+ * 文言の正本は本体の `src/config/problem-text.ts`）。版 8 までの zip では文言が公開されていないので、
+ * これまでどおり `detail` と `kind` を並べる（`pInputTypeMismatch` が `"min / text"` のようになる）。
+ *
+ * **tools 側に文言を写さない。** 写すと本体の文と食い違い、直したつもりの文が画面と変わる
+ * （ksql-action の CLAUDE.md「評価と判定のコードを tools に写させない」と同じ理由）。
+ */
+function problemMessage(
+  engine: { api: unknown },
+  p: { code: string; detail?: string; index?: number; kind?: string },
+): string {
+  const text = (engine.api as { sqlProblemText?: (problem: unknown, lang: string) => string }).sqlProblemText;
+  if (typeof text === "function") {
+    try {
+      // tools の findings も資料も日本語なので `ja` で解く（語を選ばせる口は持たない）
+      const s = text(p, "ja");
+      if (typeof s === "string" && s.trim() !== "") return s;
+    } catch {
+      // 文を作れなくても検査は続ける（下の素の並びに落ちる）
+    }
+  }
+  return [p.detail, p.index ? `文 ${p.index}` : "", p.kind].filter(Boolean).join(" / ") || p.code;
 }

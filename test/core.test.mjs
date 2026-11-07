@@ -398,7 +398,8 @@ test("checkConfig: 構文が通らないガードは pParse だけ（行番号�
     assert.equal(r.status, "invalid", g);
     const errors = r.findings.filter((f) => f.level === "error");
     assert.deepEqual(errors.map((f) => f.code), ["pParse"], `${g} / ${JSON.stringify(errors)}`);
-    assert.match(errors[0].message, /^\d+ 行目: /, errors[0].message);
+    // 版 9 からは本体の `sqlProblemText` が作る文（設定画面と同じ）。行番号は文の中に入る
+    assert.match(errors[0].message, /^SQL の構文エラー: \d+ 行目: /, errors[0].message);
   }
 });
 
@@ -569,4 +570,41 @@ test("checkConfig: 一覧の「1 件ずつ」＋ テーブルの全置換は警�
   // コメントの中の APPLY は拾わない
   const commented = await core.checkConfig(build({ sql: "-- @ksql dialect: 1\n-- APPLY 明細 ( REMOVE ALL ROWS; )\nDECLARE @cust = '';\nUPDATE LAPP_集計 SET 集計日時 = @NOW() WHERE 顧客コード = @cust;" }), { pluginZip: ZIP });
   assert.equal(commented.findings.filter((f) => f.code === "wListApplyLoop").length, 0, JSON.stringify(commented.findings));
+});
+
+/**
+ * 版 9（2026-11-07）: 検査の文が**設定画面と同じ文**になる。
+ * それまでは `detail` と `kind` を素で並べるしかなく、`pInputTypeMismatch` が
+ * **`"min / text"`** という読めない findings になっていた（試用 S4 の指摘）。
+ * 文言は本体（zip）の `sqlProblemText` が作るので、**tools 側に写していないこと**も
+ * ここで守る（写すと本体の文と食い違う）。
+ */
+test("checkConfig: 問題の文は本体の文言で出す（版 9。コードと値を素で並べない）", { skip }, async () => {
+  const config = {
+    configVersion: 1,
+    limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+    timezone: "",
+    bindings: [{ name: "受注", appId: 4377 }],
+    actions: [{
+      enabled: true, code: "mismatch", name: "型の食い違い", description: "", type: "record", placements: ["detail_menu"],
+      targetViews: [], showCond: "", execCond: "", execNgMessage: "",
+      // 数値で宣言した変数に「文字列」の入力項目を当てる → pInputTypeMismatch
+      params: [{ name: "min", source: "input", formula: "", enabled: true }],
+      inputs: [{ enabled: true, name: "min", label: "下限", type: "text", required: false, defaultFormula: "", options: [] }],
+      sql: "-- @ksql dialect: 1\nDECLARE @min = 0;\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 金額 >= @min;",
+      staticInsertRows: 0, confirm: true, writeLimit: 0, allowed: [], resultMessage: "",
+      listOnError: "continue", selectionMode: "loop", groupFormula: "", perRecordLock: false, prevRecord: false,
+    }],
+  };
+  const r = await core.checkConfig(envelope(config), { pluginZip: ZIP });
+  const found = r.findings.filter((f) => f.code === "pInputTypeMismatch");
+  assert.equal(found.length, 1, JSON.stringify(r.findings));
+  const message = found[0].message;
+  // 素の並び（"min / text"）に戻っていないこと
+  assert.notEqual(message, "min / text", "detail と kind を素で並べている（版 9 の文を使っていない）");
+  assert.match(message, /@min/, message);
+  // 入力項目の種類は画面と同じ名前（コードの "text" ではなく「文字列」）
+  assert.match(message, /文字列/, message);
+  assert.ok(message.length > 20, `文が短すぎる: ${message}`);
+  if (process.env.KACT_SHOW_MESSAGE) console.log(`    [版 9 の文] ${message}`);
 });

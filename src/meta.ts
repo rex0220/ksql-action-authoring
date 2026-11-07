@@ -20,7 +20,7 @@ export const KSQL_ACTION_PLUGIN_ID = "afkekkiffjhdkcepekecalklafjhbcmf";
 /** tools が扱う kSQL アクションの版の下限（manifest.json の version。authoring API は Ver.1 から同梱） */
 export const MIN_PLUGIN_VERSION = 1;
 /** tools が対応する authoring API の版（ksql-action の src/authoring/api.ts の AUTHORING_API_VERSION） */
-export const SUPPORTED_API_VERSIONS: readonly number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+export const SUPPORTED_API_VERSIONS: readonly number[] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
 /** kSQL アクションの版として扱えるか（整数で MIN_PLUGIN_VERSION 以上） */
 export function isSupportedPluginVersion(version: string): boolean {
@@ -102,11 +102,26 @@ export const API_V7: Record<string, "function" | "object" | "string" | "number">
  * **版を名乗る以上その口は揃っていること**を見る（2026-11-06 の Codex レビュー〈2 回目〉MINOR 1。
  * `apiVersion: 5` と名乗りながら `hasLoop` が無い zip を、黙って古い文脈に落として通していた）
  */
+/**
+ * 版 9（2026-11-07）: **検査の文言**。`checkActionSql` の `problems` を設定画面と同じ文にする
+ * （`sqlProblemText(problem, lang)` が本体側の正本。`src/config/problem-text.ts`）。
+ * これが無い zip では `detail` と `kind` を素で並べるしかなく、`pInputTypeMismatch` が
+ * `"min / text"` のような読めない findings になる（**古い zip でも動かす**ので要求はしない。
+ * `requiredApiFor` に入れるのは、版 9 の zip でこの口が欠けていたら知らせるため）。
+ */
+export const API_V9: Record<string, "function" | "object" | "string" | "number"> = {
+  sqlProblemText: "function",
+  MESSAGES: "object",
+  format: "function",
+  messageText: "function",
+};
+
 export function requiredApiFor(apiVersion: number): Record<string, "function" | "object" | "string" | "number"> {
   const api = { ...REQUIRED_API };
   if (apiVersion >= 4) Object.assign(api, API_V4);
   if (apiVersion >= 5) Object.assign(api, API_V5);
   if (apiVersion >= 7) Object.assign(api, API_V7);
+  if (apiVersion >= 9) Object.assign(api, API_V9);
   return api;
 }
 

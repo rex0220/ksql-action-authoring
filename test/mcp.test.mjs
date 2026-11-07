@@ -169,7 +169,7 @@ test("kact_docs: 1 件も無いときは短い言葉の例と章の一覧を添�
 test("kact_status: tools の版と対応する API の版を返す", { skip }, async () => {
   const r = await call(client, "kact_status");
   assert.equal(r.tools.mode, "build");
-  assert.deepEqual(r.tools.supportedApiVersions, [1, 2, 3, 4, 5, 6, 7, 8], "埋め込んだ meta は src/meta.ts から読む（書き写しではない）");
+  assert.deepEqual(r.tools.supportedApiVersions, [1, 2, 3, 4, 5, 6, 7, 8, 9], "埋め込んだ meta は src/meta.ts から読む（書き写しではない）");
   assert.equal(r.tools.pluginId, "afkekkiffjhdkcepekecalklafjhbcmf");
 });
 
