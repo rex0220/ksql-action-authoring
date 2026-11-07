@@ -13,6 +13,8 @@ const ENVELOPE_KEYS = ["appId", "appName", "PluginVersion"];
 /** アクションの、そのまま比べる値 */
 const ACTION_SCALARS = [
   "enabled", "name", "description", "type", "onList", "panelSection", "confirm", "writeLimit",
+  // イベント起動のときログに何を残すか（失敗だけ / すべて / 残さない）。漏れていた（2026-11-07 の Codex レビュー）
+  "eventLog",
   "refreshPrompt", "selectionMode", "listOnError", "perRecordLock", "prevRecord", "allowAll", "loop", "loopOnError",
   // 多言語の列（§8.5。2026-11-06）。無い → 入れた も差として出る
   "name_ja", "name_en", "name_zh", "description_ja", "description_en", "description_zh",
@@ -190,7 +192,19 @@ export function diffConfigs(before: Obj, after: Obj): string {
   const b = bodyOf(after);
   scalarDiffs(a, b, ["configVersion", "timezone", "progressStyle", "pluginComment", "pluginDescription"], out, "共通設定 / ");
   if (!same(a.bindings, b.bindings)) out.push(`共通設定 / 論理アプリ: ${show(a.bindings)} → ${show(b.bindings)}`);
-  if (!same(a.logApp, b.logApp)) out.push(`共通設定 / ログアプリ: ${a.logApp ? "あり" : "無し"} → ${b.logApp ? "あり" : "無し"}`);
+  /**
+   * ログアプリ。**「あり → あり」だけでは、記録先が変わっても分からなかった**
+   * （2026-11-07 の Codex レビュー）。無しとの出入りはそのまま、両方あるときは**項目ごとに**比べる。
+   * 秘密の値は入らない（アプリ番号・領域・実行環境名・一覧・パネルの見せ方だけ）
+   */
+  if (!same(a.logApp, b.logApp)) {
+    const la = a.logApp as Obj | undefined;
+    const lb = b.logApp as Obj | undefined;
+    if (!la || !lb) out.push(`共通設定 / ログアプリ: ${la ? "あり" : "無し"} → ${lb ? "あり" : "無し"}`);
+    else {
+      scalarDiffs(la, lb, ["appId", "profile", "guestSpaceId", "viewId", "panelLog", "panelLogOpen", "panelLogCount", "panelLogRefreshMin"], out, "共通設定 / ログアプリ / ");
+    }
+  }
   // loopMax / runMax は 2026-11-05 にループと一緒に足した項目。漏れていた（2026-11-06 の試用 S3）
   scalarDiffs(a.limits as Obj | undefined, b.limits as Obj | undefined, ["readMax", "tempTableMax", "tempTotalMax", "timeoutMin", "apiTimeoutSec", "listBulkMax", "applySubtableMax", "loopMax", "runMax"], out, "共通設定 / 制限 / ");
   panelDiffs(a.panel as Obj | undefined, b.panel as Obj | undefined, out);

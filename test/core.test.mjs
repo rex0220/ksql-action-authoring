@@ -806,3 +806,48 @@ test("checkConfig: 共通の文は 3 つの口すべてで使え、ほかの口�
   assert.equal(bad.status, "invalid");
   assert.ok(bad.findings.some((f) => String(f.message).includes("message:slot")), JSON.stringify(bad.findings));
 });
+
+// 2026-11-07 の Codex レビュー: 設定画面は保存の前に**圧縮後**の大きさを測って止めるのに、
+// tools はファイルの生バイト数しか見ていなかった。kact_save_config が ok でも
+// 取り込んだ設定画面の［保存する］で容量超過になる設定を作れた
+test("checkConfig: 設定が大きすぎれば圧縮後の大きさで止める", { skip }, async () => {
+  // 圧縮が効きにくい長い SQL を並べる（件数と文字数の上限だけでは壁を保証できない）。
+  // 乱数だと試験が揺れるので、決まった種の線形合同法で作る
+  const noise = (seed) => {
+    let x = (seed * 2654435761 + 12345) >>> 0;
+    const out = [];
+    for (let i = 0; i < 2000; i++) {
+      x = (x * 1664525 + 1013904223) >>> 0;
+      out.push(x.toString(36));
+    }
+    return out.join(" ");
+  };
+  const action = (n) => ({
+    enabled: true, code: `a${n}`, name: `アクション${n}`, description: "", type: "app", onList: false,
+    placements: [], panelSection: "", showCond: "", execCond: "", execNgMessage: "",
+    params: [], inputs: [], resultMessage: "",
+    sql: `-- @ksql dialect: 1\n-- ${noise(n)}\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 処理状況 = '';`,
+    staticInsertRows: 0, confirm: true, writeLimit: 1, refreshPrompt: "auto", allowed: [], allowAll: true,
+    listOnError: "continue", selectionMode: "loop", groupFormula: "", loop: "", loopOnError: "stop",
+    perRecordLock: false, prevRecord: false,
+  });
+  const build = (count) => envelope({
+    configVersion: 1, bindings: [{ name: "受注", appId: 1001 }],
+    limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+    timezone: "",
+    panel: { title: "", sectionColumns: 1, buttonWidth: 200, buttonLogLink: false, sections: [], views: [{ viewId: "*", sections: [""], menus: [], open: false }] },
+    actions: Array.from({ length: count }, (_, i) => action(i)),
+  });
+
+  // 小さい設定は今までどおり通る
+  const small = await core.checkConfig(build(1), { pluginZip: ZIP });
+  assert.equal(small.findings.filter((f) => f.code === "config-too-large").length, 0, JSON.stringify(small.findings));
+  assert.equal(small.findings.filter((f) => f.code === "config-size-unknown").length, 0, "測れている");
+
+  // 上限を超えたら error（圧縮後で測っていることも文面で分かる）
+  const big = await core.checkConfig(build(50), { pluginZip: ZIP });
+  const tooLarge = big.findings.find((f) => f.code === "config-too-large");
+  assert.ok(tooLarge, JSON.stringify(big.findings.map((f) => f.code)));
+  assert.equal(tooLarge.level, "error");
+  assert.match(tooLarge.message, /圧縮後/);
+});

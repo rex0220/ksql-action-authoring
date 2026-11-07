@@ -48,6 +48,16 @@ export const REQUIRED_API: Record<string, "function" | "object" | "string" | "nu
   buildExportData: "function", parseImport: "function"
 };
 
+/**
+ * 版 3 で足した実行計画（`kact_explain` が使う）。
+ * **版の表に入れていなかったので、口が欠けた zip でも「版 3 以上」と名乗れば読み込みが通っていた**
+ * （2026-11-07 の Codex レビュー）。欠けていれば `kact_explain` がその場で落ちるだけだが、
+ * 読み込みの時点で断るほうが、何が足りないかが分かる
+ */
+export const API_V3: Record<string, "function"> = {
+  explainActionSql: "function", createFieldsClient: "function"
+};
+
 /** 版 4 で足した計算式の評価（`kact_try` が使う。実行時と同じコードを公開したもの） */
 export const API_V4: Record<string, "function"> = {
   evalFormula: "function", evalCondition: "function", toParamValue: "function", withResultRecord: "function"
@@ -109,6 +119,14 @@ export const API_V7: Record<string, "function" | "object" | "string" | "number">
  * `"min / text"` のような読めない findings になる（**古い zip でも動かす**ので要求はしない。
  * `requiredApiFor` に入れるのは、版 9 の zip でこの口が欠けていたら知らせるため）。
  */
+/**
+ * 版 8 で足した選択肢の逆向きの検査（`choiceUnknown` の素になる口）。
+ * **版の表に入れていなかった**ので、口が欠けた zip でも通り、
+ * **選択肢の検査だけが黙って効かなくなる**（findings が出ないことを AI は成功と読む。
+ * 0.10.0 で実際に起きた形と同じ。2026-11-07 の Codex レビュー）
+ */
+export const API_V8: Record<string, "function"> = { sqlChoiceLiterals: "function" };
+
 export const API_V9: Record<string, "function" | "object" | "string" | "number"> = {
   sqlProblemText: "function",
   MESSAGES: "object",
@@ -118,9 +136,11 @@ export const API_V9: Record<string, "function" | "object" | "string" | "number">
 
 export function requiredApiFor(apiVersion: number): Record<string, "function" | "object" | "string" | "number"> {
   const api = { ...REQUIRED_API };
+  if (apiVersion >= 3) Object.assign(api, API_V3);
   if (apiVersion >= 4) Object.assign(api, API_V4);
   if (apiVersion >= 5) Object.assign(api, API_V5);
   if (apiVersion >= 7) Object.assign(api, API_V7);
+  if (apiVersion >= 8) Object.assign(api, API_V8);
   if (apiVersion >= 9) Object.assign(api, API_V9);
   return api;
 }

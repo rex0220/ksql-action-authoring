@@ -500,3 +500,23 @@ test("saveConfig: 共通の文（messages）はツールからは足せない", 
   }, opt);
   assert.equal(ok.status, "ok", JSON.stringify(ok.findings));
 });
+
+// 2026-11-07 の Codex レビュー: 記録範囲（eventLog）と記録先（logApp の中身）が差分に出なかった。
+// AI が利用者に見せる確認結果から、記録の方針と置き場所の変更が消えていた
+test("diffConfigs: 記録範囲と記録先の変更が差分に出る", () => {
+  const env = (eventLog, logAppOver) => ({
+    date: "2026-11-07 00:00", pluginName: "kSQL アクション", pluginID: "rex0220 ksql action",
+    PluginVersion: "1", appId: 1001, appName: "受注",
+    configVersion: 1, bindings: [{ name: "受注", appId: 1001 }],
+    logApp: { appId: 1002, profile: "", guestSpaceId: 0, viewId: 0, panelLog: false, panelLogOpen: false, panelLogCount: 20, panelLogRefreshMin: 10, ...logAppOver },
+    actions: [{ code: "ev", name: "イベント", type: "record", placements: ["event_edit"], eventLog }],
+  });
+
+  const d = diffConfigs(env("failed"), env("all", { appId: 1003 }));
+  assert.match(d, /eventLog: failed → all/, d);
+  assert.match(d, /ログアプリ \/ appId: 1002 → 1003/, d);
+
+  // 無しとの出入りは今までどおり
+  const gone = diffConfigs(env("failed"), { ...env("failed"), logApp: undefined });
+  assert.match(gone, /ログアプリ: あり → 無し/, gone);
+});

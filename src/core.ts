@@ -464,6 +464,43 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
     });
   }
 
+  /**
+   * 2a 設定の大きさ（**圧縮後**。API 版 7 の `measureConfigBytes`）。
+   *
+   * 設定画面は保存の前にこれで測って止める（`ksql-action/src/config/main.ts`）。
+   * tools は**ファイルの生バイト数**しか見ていなかったので、`kact_save_config` が `ok` でも
+   * 取り込んだ設定画面の［保存する］で**容量超過になる設定を作れた**（2026-11-07 の Codex レビュー）。
+   * 件数と文字数の上限では壁を保証できない（SQL 20,000 字 × 50 アクションで壁の数倍に届く）。
+   *
+   * 版 7 より前の zip にはこの口が無いので、そのときは測らない（黙って飛ばす＝古い zip の約束）。
+   */
+  {
+    const api = engine.api as { measureConfigBytes?: (d: unknown) => Promise<number>; CONFIG_MAX_BYTES?: number };
+    if (typeof api.measureConfigBytes === "function" && typeof api.CONFIG_MAX_BYTES === "number") {
+      const max = api.CONFIG_MAX_BYTES;
+      try {
+        const bytes = await api.measureConfigBytes(config);
+        if (bytes > max) {
+          findings.push({
+            level: "error",
+            code: "config-too-large",
+            message:
+              `設定が大きすぎます（圧縮後 ${Math.ceil(bytes / 1024).toLocaleString()} KB。上限 ${Math.floor(max / 1024).toLocaleString()} KB）。`
+              + "設定画面の［保存する］でも同じところで止まります。アクションを減らすか、SQL と説明を短くしてください"
+              + "（**測るのは圧縮後**なので、ファイルの大きさとは一致しません）",
+          });
+        }
+      } catch (e) {
+        // 測れなかったことは黙って飛ばさない（握りつぶすと「検査した」と読まれる）
+        findings.push({
+          level: "warning",
+          code: "config-size-unknown",
+          message: `設定の大きさ（圧縮後）を測れなかったので、容量の上限は見ていない: ${e instanceof Error ? e.message : String(e)}`,
+        });
+      }
+    }
+  }
+
   // 3 アクションごとの SQL
   const actions = Array.isArray(config.actions) ? (config.actions as Array<Record<string, unknown>>) : [];
   const bindings = (Array.isArray(config.bindings) ? config.bindings : []) as Array<{ name: string; appId: number }>;
