@@ -843,7 +843,7 @@ export function unknownSectionFindings(
             ? "。`placements` に `detail_menu` も無いので、**どこにも出ません**。"
             : "。")
         + " 区分を `panel.sections` に足すか、既にある区分の名前に直してください"
-        + "（区分の追加・名前の確認は設定画面の［パネル・区分］で行います。ツールからは `panel` を読めません）",
+        + "（今の区分は `kact_actions` の返りの `common.panel.sections` で読めます。足すのは `kact_update_common` か、設定画面の［パネル・区分］）",
       actionIndex: i + 1,
       actionCode: String(action.code ?? ""),
     });
@@ -1158,10 +1158,26 @@ export function arrayDeclareNames(sql: string): string[] {
 }
 
 /** 設定の中身を一覧（kact_actions）。**SQL 本文と値は返さない** */
+/**
+ * 共通設定（アクションでも共通の文でもないところ）。**`kact_update_common` で直せる範囲と対**。
+ *
+ * **`panel` は長いあいだツールから読めなかった**（`unknownSectionFindings` の文も
+ * 「ツールからは `panel` を読めません」と書いていた）。読めないものは直せないので、
+ * **読みと書きを同時に足した**（2026-11-07 の試用 S17）。秘密の値は入らない
+ * （`logApp.profile` は接続の**名前**で、ホストも鍵も入らない）
+ */
+export interface CommonSummary {
+  bindings: Array<{ name: string; appId: number }>;
+  timezone: string;
+  limits: Record<string, unknown>;
+  logApp: Record<string, unknown> | null;
+  panel: Record<string, unknown> | null;
+}
+
 export async function listActions(
   text: string,
   opt: LoadEngineOptions = {},
-): Promise<{ status: ToolStatus; actions?: ActionSummary[]; messages?: string[]; findings: Finding[] }> {
+): Promise<{ status: ToolStatus; actions?: ActionSummary[]; messages?: string[]; common?: CommonSummary; findings: Finding[] }> {
   let engine: Engine;
   try {
     engine = await loadEngine(opt);
@@ -1185,9 +1201,24 @@ export async function listActions(
   const messages = (Array.isArray(config.messages) ? config.messages : [])
     .map((msg) => String((msg as { code?: unknown }).code ?? ""))
     .filter(Boolean);
+  const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
   return {
     status: "ok",
     ...(messages.length > 0 ? { messages } : {}),
+    /**
+     * 共通設定。**`panel` を返すのが要点**（区分と一覧ごとの出し方は、読めないと直しようがない）。
+     * `migrateConfig` を通った後なので、省略されていた既定も埋まった形で返る
+     */
+    common: {
+      bindings: (Array.isArray(config.bindings) ? config.bindings : []).map((b) => ({
+        name: String((b as { name?: unknown }).name ?? ""),
+        appId: Number((b as { appId?: unknown }).appId ?? 0),
+      })),
+      timezone: String(config.timezone ?? ""),
+      limits: obj(config.limits) ?? {},
+      logApp: obj(config.logApp),
+      panel: obj(config.panel),
+    },
     actions: actions.map((a, i) => ({
       index: i + 1,
       code: String(a.code ?? ""),

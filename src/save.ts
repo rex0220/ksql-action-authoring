@@ -362,6 +362,100 @@ export async function updateAction(input: UpdateActionInput, opt: LoadEngineOpti
   }
 }
 
+/** `kact_update_common` で直せる共通設定のキー（**`actions` と `messages` は含まない**） */
+export const COMMON_KEYS = ["bindings", "timezone", "limits", "logApp", "panel"] as const;
+export type CommonKey = (typeof COMMON_KEYS)[number];
+
+export interface UpdateCommonInput {
+  file: string;
+  /** 読んだ時点の digest（`kact_actions` が返す）。違えば conflict */
+  expectedDigest: string;
+  /** 直す共通設定（**渡したキーだけ**を差し替える。入れ子は丸ごと置き換え） */
+  common: unknown;
+  now?: () => Date;
+}
+
+/**
+ * 共通設定（論理アプリ・時間帯・上限・ログアプリ・パネルと区分）を直す。
+ * **`actions` と `messages` には触らない**（`kact_update_action` が `messages` に触らないのと同じ理屈）。
+ *
+ * **なぜ別の口が要るか**（2026-11-07 の試用 S17）:
+ * `panel` を書けるのは `kact_save_config` だけだったが、そちらは**共通の文がある設定を丸ごと断る**
+ * （`messages-not-writable`）。狙いは「AI が思いつきで作った文が、利用者の書いた文を全置換で潰す」ことを
+ * 止めることだったのに、**文を変えずに運ぶだけの保存まで止めていた**ので、
+ * **共通の文を使っている設定では `panel` / `limits` / `logApp` / `timezone` がツールから一切直せなかった**。
+ * ここは `messages` を**読みも書きもしない**ので、その心配が無い。
+ *
+ * 入れ子（`panel` など）は**丸ごと置き換え**。半端に重ねると、消したつもりの行が残って
+ * 「設定したのに出ない」になるため。今の中身は `kact_actions` の返りの `common` で読める。
+ */
+export async function updateCommon(input: UpdateCommonInput, opt: LoadEngineOptions = {}): Promise<SaveResult> {
+  const engine = await engineOf(opt);
+  if (isResult(engine)) return engine;
+  if (!isObject(input.common)) return fail("input", "common は共通設定のオブジェクトで渡す", "invalid");
+  if (!input.expectedDigest) return fail("input", "expectedDigest が要る（kact_actions で読んだ digest）", "invalid");
+  const keys = Object.keys(input.common);
+  if (keys.length === 0) return fail("input", `common が空（直すキーを入れる: ${COMMON_KEYS.join(" / ")}）`, "invalid");
+  const bad = keys.filter((k) => !(COMMON_KEYS as readonly string[]).includes(k));
+  if (bad.length > 0) {
+    return fail(
+      "input",
+      `この口で直せないキーがあります（${bad.join(" / ")}）。直せるのは ${COMMON_KEYS.join(" / ")} だけです。`
+      + "アクションは `kact_update_action`、共通の文（messages）は**設定画面のツールバーの［メッセージ］**で直してください",
+      "invalid",
+    );
+  }
+
+  let target: string;
+  try {
+    target = resolveInWorkspace(input.file);
+  } catch (e) {
+    return fromWorkspaceError(e);
+  }
+  const current = readFileSync(target, "utf8");
+  if (digestOf(current) !== input.expectedDigest) {
+    return { status: "conflict", findings: [{ level: "error", code: "digest", message: "読んだ後にファイルが変わった（digest が違う）。kact_actions で読み直してやり直す" }], path: input.file };
+  }
+
+  let envelope: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(current);
+    if (!isObject(parsed)) throw new Error("設定ファイルがオブジェクトでない");
+    envelope = parsed;
+  } catch (e) {
+    return fail("parse-failed", e instanceof Error ? e.message : String(e), "invalid");
+  }
+
+  const body = bodyOf(envelope);
+  const before = Object.fromEntries(keys.map((k) => [k, body[k]]));
+  const text = JSON.stringify({ ...envelope, date: formatDate((input.now ?? (() => new Date()))()), ...bodyOf({ ...body, ...(input.common as Record<string, unknown>) }) });
+  if (Buffer.byteLength(text, "utf8") > MAX_CONFIG_BYTES) return fail("too-large", `設定ファイルが大きすぎる（生のバイト数で ${MAX_CONFIG_BYTES.toLocaleString()} バイトまで）`, "invalid");
+
+  const checked = await checkOrFail(text, opt);
+  if (!checked.ok) return checked.result;
+
+  try {
+    const { digest, cleanup } = commit(target, text, "replace", () => {
+      if (resolveInWorkspace(input.file) !== target) throw new WorkspaceError("書く先が途中で変わった（symlink など）", "outside");
+      if (digestOf(readFileSync(target)) !== input.expectedDigest) throw new LockBusyError("確定の直前にファイルが変わった（digest が違う）。kact_actions で読み直してやり直す");
+    });
+    const changes = keys
+      .map((k) => `${k}: ${JSON.stringify(before[k] ?? null)} → ${JSON.stringify((input.common as Record<string, unknown>)[k] ?? null)}`)
+      .join("\n");
+    return {
+      status: "ok",
+      path: input.file,
+      digest,
+      summary: checked.summary,
+      findings: checked.findings,
+      message: `共通設定を直した: ${keys.join(" / ")}${cleanup.length ? "（一時ファイルかロックを消せなかった。. で始まる同じ名前のファイルを消してよい）" : ""}`,
+      ...(changes ? { changes } : {}),
+    };
+  } catch (e) {
+    return fromCommitError(e);
+  }
+}
+
 export interface DeleteActionInput {
   file: string;
   /** 読んだ時点の digest（`kact_actions` が返す）。違えば conflict */

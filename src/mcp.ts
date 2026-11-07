@@ -19,7 +19,7 @@ import { readFileSync } from "node:fs";
 import { checkConfig,
   explainAction, listActions, statusOf } from "./core.ts";
 import { resolveInWorkspace, workspaceStatus, WorkspaceError } from "./workspace.ts";
-import { deleteAction, digestOf, filesOf, pullConfig, saveConfig, updateAction } from "./save.ts";
+import { deleteAction, digestOf, filesOf, pullConfig, saveConfig, updateAction, updateCommon } from "./save.ts";
 import { appAreasFrom, appsFieldsFrom, connectionReport, fetchFields, findFieldsFile, listApps, listViews, type AppArea, type KintoneOptions } from "./fields.ts";
 import { diffConfigs } from "./diff.ts";
 import { tryFormulas, TRY_SLOTS } from "./try.ts";
@@ -441,6 +441,33 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     async ({ file, expectedDigest, action, replaceCode }) => json(await updateAction({ file, expectedDigest, action, replaceCode }, zipOptions())),
+  );
+
+  server.registerTool(
+    "kact_update_common",
+    {
+      title: "kact: 共通設定を直す（論理アプリ・上限・ログアプリ・パネルと区分）",
+      description:
+        "既存の設定ファイルの**共通設定**を直す（bindings / timezone / limits / logApp / panel）。**アクションと共通の文（messages）には触らない**。" +
+        "**kact_actions で読んだ digest を expectedDigest に渡す**（読んだ後に変わっていたら conflict）。" +
+        "**今の中身は kact_actions の返りの common で読める**（panel の区分と一覧ごとの出し方もそこに出る）。" +
+        "**渡したキーだけ**を差し替え、入れ子（panel など）は**丸ごと置き換え**る（半端に重ねると消したつもりの行が残る）。" +
+        "書く前に設定全体を本体と同じ規則で検査し、エラーがあれば書かない。" +
+        "**一覧ごとの出し入れは区分（panelSection）ごと**なので、ボタン 1 つだけ別の一覧にしたいならその区分を分ける。" +
+        "**panel.views に \"*\"（ほかの一覧すべて）の行が無い設定では、新しい一覧は行を足さないと何も出ない**。",
+      inputSchema: {
+        file: z.string().min(1).max(200).describe("作業フォルダーからの相対パス"),
+        expectedDigest: z.string().min(16).max(128).describe("kact_actions か kact_files が返した digest"),
+        common: z
+          .record(z.unknown())
+          .describe(
+            "直す共通設定（bindings / timezone / limits / logApp / panel のうち、**変えるキーだけ**）。" +
+              "ほかのキー（actions・messages など）を入れると invalid。入れ子は丸ごと置き換えなので、panel は kact_actions の common.panel を元に全体を渡す",
+          ),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ file, expectedDigest, common }) => json(await updateCommon({ file, expectedDigest, common }, zipOptions())),
   );
 
   server.registerTool(

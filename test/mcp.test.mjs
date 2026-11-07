@@ -54,11 +54,12 @@ after(async () => {
 });
 const call = async (client, name, args = {}) => JSON.parse((await client.callTool({ name, arguments: args })).content[0].text);
 
-test("ツールが 16 本出る（読み取り専用の注釈つき）", { skip }, async () => {
+test("ツールが 17 本出る（読み取り専用の注釈つき）", { skip }, async () => {
   const { tools } = await client.listTools();
   assert.deepEqual(tools.map((t) => t.name).sort(), [
     "kact_actions", "kact_apps", "kact_check", "kact_delete_action", "kact_diff", "kact_docs", "kact_explain", "kact_fields",
-    "kact_files", "kact_pull", "kact_save_config", "kact_status", "kact_try", "kact_update_action", "kact_views", "kact_workspace_status",
+    "kact_files", "kact_pull", "kact_save_config", "kact_status", "kact_try", "kact_update_action", "kact_update_common",
+    "kact_views", "kact_workspace_status",
   ]);
   const readOnly = new Set(["kact_docs", "kact_status", "kact_workspace_status", "kact_check", "kact_actions", "kact_files", "kact_diff", "kact_apps", "kact_views", "kact_explain", "kact_try"]);
   // kintone に通信するのは段階 3 の 3 本だけ（ほかは zip と作業フォルダーだけ）

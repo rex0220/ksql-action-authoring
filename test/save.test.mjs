@@ -12,7 +12,7 @@ const ZIP = process.env.KACT_PLUGIN_ZIP?.trim() || fileURLToPath(new URL("../../
 const require = createRequire(import.meta.url);
 const esbuild = require("esbuild");
 mkdirSync("dist", { recursive: true });
-for (const name of ["save", "diff"]) {
+for (const name of ["save", "diff", "core"]) {
   await esbuild.build({ entryPoints: [`src/${name}.ts`], bundle: true, format: "esm", platform: "node", outfile: `dist/${name}.test-bundle.mjs`, external: ["happy-dom"], logLevel: "warning" });
 }
 const save = await import(pathToFileURL("dist/save.test-bundle.mjs").href);
@@ -546,3 +546,106 @@ test("saveConfig: kintone が受け付ける大きさの設定を、生のバイ
     JSON.stringify(r.findings));
   assert.equal(existsSync(join(ws, "settings/kact-big-ok.json")), true, "書けている");
 });
+
+/**
+ * 共通設定を直す（`kact_update_common`）。2026-11-07 の試用 S17 で足した。
+ *
+ * **なぜ別の口が要るか**: `panel` を書けるのは `kact_save_config` だけだったが、そちらは
+ * **共通の文がある設定を丸ごと断る**（`messages-not-writable`）。止めたかったのは
+ * 「AI が思いつきで作った文が利用者の文を全置換で潰す」ことなのに、**文を変えずに運ぶだけの保存まで
+ * 止めていた**ので、共通の文を使っている設定では `panel` / `limits` / `logApp` / `timezone` が
+ * **ツールから一切直せなかった**。ここは `messages` を読みも書きもしない。
+ */
+test("updateCommon: panel を直す（アクションと messages には触らない）", { skip }, async () => {
+  // 共通の文がある設定を作る（ツールからは作れないので、ファイルを直接書く）
+  const withMessages = {
+    date: "2026-11-07 00:00", pluginName: "kSQL アクション", pluginID: "rex0220 ksql action", PluginVersion: "1",
+    appId: 1001, appName: "受注",
+    configVersion: 1,
+    bindings: [{ name: "受注", appId: 1001 }],
+    messages: [{ code: "m_done", text: "終わりました" }],
+    limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+    timezone: "",
+    panel: { title: "", sectionColumns: 1, buttonWidth: 200, buttonLogLink: false, sections: [], views: [{ viewId: "*", sections: [""], menus: [], open: false }] },
+    actions: [{
+      enabled: true, code: "sum", name: "集計する", description: "", type: "record", placements: ["detail_menu"],
+      panelSection: "", showCond: "", execCond: "", execNgMessage: "", params: [], inputs: [],
+      sql: "-- @ksql dialect: 1\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE $id = 1;",
+      staticInsertRows: 0, confirm: true, writeLimit: 10, allowed: [], allowAll: true, resultMessage: "$m_done",
+      listOnError: "continue", groupFormula: "", perRecordLock: false, prevRecord: false,
+    }],
+  };
+  writeFileSync(join(ws, "settings/with-messages.json"), JSON.stringify(withMessages));
+  const digest = save.digestOf(readFileSync(join(ws, "settings/with-messages.json"), "utf8"));
+
+  // まず、この設定は kact_save_config では書けない（止めたままであることも守る）
+  const blocked = await save.saveConfig({ file: "settings/blocked.json", appId: 1001, config: withMessages }, opt);
+  assert.equal(blocked.status, "invalid");
+  assert.equal(blocked.findings[0].code, "messages-not-writable");
+
+  // updateCommon なら直せる（新しい一覧の行を足す）
+  const nextPanel = {
+    ...withMessages.panel,
+    views: [{ viewId: "16551628", sections: [""], menus: [], open: true }],
+  };
+  const r = await save.updateCommon({ file: "settings/with-messages.json", expectedDigest: digest, common: { panel: nextPanel } }, opt);
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  assert.notEqual(r.digest, digest);
+  assert.match(r.changes ?? "", /panel/);
+
+  const env = JSON.parse(readFileSync(join(ws, "settings/with-messages.json"), "utf8"));
+  assert.equal(env.panel.views.length, 1);
+  assert.equal(env.panel.views[0].viewId, "16551628");
+  // アクションと共通の文は無傷
+  assert.equal(env.actions.length, 1);
+  assert.equal(env.actions[0].resultMessage, "$m_done");
+  assert.deepEqual(env.messages, [{ code: "m_done", text: "終わりました" }]);
+});
+
+test("updateCommon: 渡したキーだけ差し替える／直せないキーは invalid", { skip }, async () => {
+  const digest = save.digestOf(readFileSync(join(ws, "settings/with-messages.json"), "utf8"));
+  const r = await save.updateCommon({ file: "settings/with-messages.json", expectedDigest: digest, common: { timezone: "Asia/Tokyo" } }, opt);
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  const env = JSON.parse(readFileSync(join(ws, "settings/with-messages.json"), "utf8"));
+  assert.equal(env.timezone, "Asia/Tokyo");
+  // 渡していない panel は残る
+  assert.equal(env.panel.views[0].viewId, "16551628");
+
+  // actions / messages はこの口では直せない（messages を回り道で書かせない）
+  for (const key of ["actions", "messages"]) {
+    const ng = await save.updateCommon({ file: "settings/with-messages.json", expectedDigest: r.digest, common: { [key]: [] } }, opt);
+    assert.equal(ng.status, "invalid", key);
+    assert.match(ng.findings[0].message, /直せないキー/);
+  }
+  // 空も invalid
+  const empty = await save.updateCommon({ file: "settings/with-messages.json", expectedDigest: r.digest, common: {} }, opt);
+  assert.equal(empty.status, "invalid");
+});
+
+test("updateCommon: digest が違えば conflict（書かない）／検査を通らなければ書かない", { skip }, async () => {
+  const before = readFileSync(join(ws, "settings/with-messages.json"), "utf8");
+  const conflict = await save.updateCommon({ file: "settings/with-messages.json", expectedDigest: "0".repeat(64), common: { timezone: "UTC" } }, opt);
+  assert.equal(conflict.status, "conflict");
+  assert.equal(readFileSync(join(ws, "settings/with-messages.json"), "utf8"), before);
+
+  // 形が通らない共通設定は書かない（時間帯の誤り）
+  const digest = save.digestOf(before);
+  const bad = await save.updateCommon({ file: "settings/with-messages.json", expectedDigest: digest, common: { limits: { readMax: -1 } } }, opt);
+  assert.notEqual(bad.status, "ok");
+  assert.equal(readFileSync(join(ws, "settings/with-messages.json"), "utf8"), before);
+});
+
+test("listActions: 共通設定（panel を含む）を返す", { skip }, async () => {
+  const core = await import(pathToFileURL("dist/core.test-bundle.mjs").href);
+  const text = readFileSync(join(ws, "settings/with-messages.json"), "utf8");
+  const r = await core.listActions(text, opt);
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  assert.ok(r.common, "common が無い（panel が読めないと直しようがない）");
+  assert.equal(r.common.panel.views[0].viewId, "16551628");
+  assert.equal(r.common.timezone, "Asia/Tokyo");
+  assert.deepEqual(r.common.bindings, [{ name: "受注", appId: 1001 }]);
+  assert.equal(r.common.logApp, null);
+  // 文そのものは返さない（コードだけ）
+  assert.deepEqual(r.messages, ["m_done"]);
+});
+
