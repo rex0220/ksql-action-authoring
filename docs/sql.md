@@ -16,8 +16,16 @@
 
 表に無い種類は**保存時に拒否**します（fail-closed）。`SELECT` は、許す文の中（`INSERT … SELECT`、`SET @x = (SELECT …)`、CTE、サブクエリ、一時テーブル）でだけ使えます。
 
-**`DELETE` には `WHERE` が必須**です（全件削除を防ぐため）。`DELETE FROM LAPP_集計;` は「DELETE 文には WHERE 句が必須です」で**保存できません**。
-集計アプリを作り直す形では `DELETE FROM LAPP_集計 WHERE $id > 0;` のように、全件に当たる条件を書きます。
+**`DELETE` と `UPDATE` には `WHERE` が必須**です（全件を書き換えるのを防ぐため）。
+`DELETE FROM LAPP_集計;` は「DELETE 文には WHERE 句が必須です」、
+`UPDATE LAPP_受注 SET 担当者 = '';` は「UPDATE 文には WHERE 句が必要です（全件更新を防ぐため）」で、
+どちらも `pParse` で**保存できません**。
+
+**本当に全件に当てたいときは、その意図を条件に書きます**（`WHERE $id > 0`）。
+集計アプリを作り直す `DELETE FROM LAPP_集計 WHERE $id > 0;` や、
+全件の項目を空にする `UPDATE LAPP_受注 SET 担当者 = '' WHERE $id > 0;` がその形です。
+**`WHERE` を省いて全件に当てる道はありません**。だから実行計画に `predicate` の無い書き込みの文は出ません
+（全件に当たる形は `kintone query: $id > 0` として見えます）。
 
 ## パラメーター（`DECLARE` の外部注入）
 
