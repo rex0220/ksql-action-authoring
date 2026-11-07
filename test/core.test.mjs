@@ -690,3 +690,119 @@ test("checkConfig: 共通の文（$m_…）は messages に定義してあれば
   assert.match(hint.message, /\u5171\u901a\u306e\u6587/);
   assert.match(hint.message, /execNgMessage/);
 });
+
+// 2026-11-07 の対応漏れの洗い出し: 結果メッセージの文脈に**ループかどうか**を渡していなかった。
+// `$result_runs` ほか 4 つは本体の RESULT_LOOP_FIELDS で「ループのときだけ」足されるので、
+// 渡さないと**設定画面は通すのに tools だけが「無い項目」で拒む**
+test("checkConfig: ループの結果メッセージは $result_runs を使える", { skip }, async () => {
+  const build = (loop, resultMessage) => envelope({
+    configVersion: 1, bindings: [{ name: "受注", appId: 1001 }],
+    limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+    timezone: "",
+    panel: { title: "", sectionColumns: 1, buttonWidth: 200, buttonLogLink: false, sections: [], views: [{ viewId: "*", sections: [""], menus: [], open: false }] },
+    actions: [{
+      enabled: true, code: "lp", name: "ループ", description: "", type: "app", onList: false,
+      placements: [], panelSection: "", showCond: "", execCond: "", execNgMessage: "",
+      params: [], inputs: [], resultMessage,
+      sql: "-- @ksql dialect: 1\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 処理状況 = '';",
+      staticInsertRows: 0, confirm: true, writeLimit: 10, refreshPrompt: "auto", allowed: [], allowAll: true,
+      listOnError: "continue", selectionMode: "loop", groupFormula: "", loop, loopOnError: "stop",
+      perRecordLock: false, prevRecord: false,
+    }],
+  });
+  const fields = { 処理状況: { type: "SINGLE_LINE_TEXT", code: "処理状況", label: "処理状況" } };
+  const opt = { pluginZip: ZIP, fields, appId: 1001 };
+  const msg = '"回数 " & $result_runs & " / 成功 " & $result_ok_runs';
+
+  // ループあり → 使える（ここが落ちていた）
+  const looped = await core.checkConfig(build("3", msg), opt);
+  assert.equal(looped.findings.filter((f) => f.code === "pFormulaField").length, 0, JSON.stringify(looped.findings));
+
+  // ループなし → これまでどおり「無い項目」（ループ専用の擬似項目なので、足してはいけない）
+  const plain = await core.checkConfig(build("", msg), opt);
+  assert.ok(plain.findings.some((f) => f.code === "pFormulaField"), JSON.stringify(plain.findings));
+
+  // ループでなくても、ふつうの $result_* は使える
+  const normal = await core.checkConfig(build("", '"合計 " & $result_total'), opt);
+  assert.equal(normal.findings.filter((f) => f.code === "pFormulaField").length, 0, JSON.stringify(normal.findings));
+});
+
+// 2026-11-07 の対応漏れの洗い出し: 設定画面が見ない口を tools が見ていた。
+// 本体は groupFormula を「グループごと」のときだけ、loop を hasLoop のときだけ検査する。
+// 条件なしで見ると、渡し方を変えた後の残りかすが **tools だけで** 保存を止める
+// （S6 のとおり、エラーが 1 つあると kact_update_action は何も書けない）
+test("checkConfig: 効かない式（残りかす）は設定画面と同じく見ない", { skip }, async () => {
+  const build = (over) => envelope({
+    configVersion: 1, bindings: [{ name: "受注", appId: 1001 }],
+    limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+    timezone: "",
+    panel: { title: "", sectionColumns: 1, buttonWidth: 200, buttonLogLink: false, sections: [], views: [{ viewId: "*", sections: [""], menus: [], open: false }] },
+    actions: [{
+      enabled: true, code: "left", name: "残りかす", description: "", type: "record", onList: true,
+      placements: ["detail_menu"], panelSection: "", showCond: "", execCond: "", execNgMessage: "",
+      params: [], inputs: [], resultMessage: "",
+      sql: "-- @ksql dialect: 1\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 処理状況 = '';",
+      staticInsertRows: 0, confirm: true, writeLimit: 10, refreshPrompt: "auto", allowed: [], allowAll: true,
+      listOnError: "continue", selectionMode: "loop", groupFormula: "", loop: "", loopOnError: "stop",
+      perRecordLock: false, prevRecord: false,
+      ...over,
+    }],
+  });
+  const fields = { 処理状況: { type: "SINGLE_LINE_TEXT", code: "処理状況", label: "処理状況" } };
+  const opt = { pluginZip: ZIP, fields, appId: 1001 };
+
+  // 「1 件ずつ」に戻したあとに残った分ける式は見ない（設定画面も見ない）
+  const leftover = await core.checkConfig(build({ selectionMode: "loop", groupFormula: "もう無い項目" }), opt);
+  assert.equal(leftover.findings.filter((f) => f.code === "pFormulaField").length, 0, JSON.stringify(leftover.findings));
+
+  // 「グループごと」なら今までどおり見る
+  const grouped = await core.checkConfig(build({ selectionMode: "group", groupFormula: "もう無い項目" }), opt);
+  assert.ok(grouped.findings.some((f) => f.code === "pFormulaField"), JSON.stringify(grouped.findings));
+
+  // ループを空にした後に残った式も見ない
+  const noLoop = await core.checkConfig(build({ loop: "", resultMessage: "" }), opt);
+  assert.equal(noLoop.findings.filter((f) => f.code === "pFormulaField").length, 0, JSON.stringify(noLoop.findings));
+});
+
+// 2026-11-07 の対応漏れの洗い出し: 共通の文を書ける 3 つの口（本体の MESSAGE_SLOTS =
+// execNgMessage / resultMessage / optionLabelsFormula）が、それぞれ別の文脈で検査される。
+// resultMessage だけは result() 側が $m_… を含むので、message() に回すと $result_* を失う。
+// この 3 つを一度に固定して、今日の直しが将来ほどけないようにする
+test("checkConfig: 共通の文は 3 つの口すべてで使え、ほかの口では使えない", { skip }, async () => {
+  const messages = [{ code: "m_x", text: "文" }];
+  const build = (over) => envelope({
+    configVersion: 1, bindings: [{ name: "受注", appId: 1001 }], messages,
+    limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+    timezone: "",
+    panel: { title: "", sectionColumns: 1, buttonWidth: 200, buttonLogLink: false, sections: [], views: [{ viewId: "*", sections: [""], menus: [], open: false }] },
+    actions: [{
+      enabled: true, code: "ms", name: "共通の文", description: "", type: "record", onList: false,
+      placements: ["detail_menu"], panelSection: "", showCond: "", execCond: "", execNgMessage: "",
+      params: [], inputs: [], resultMessage: "",
+      sql: "-- @ksql dialect: 1\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 処理状況 = '';",
+      staticInsertRows: 0, confirm: true, writeLimit: 1, refreshPrompt: "auto", allowed: [], allowAll: true,
+      listOnError: "continue", selectionMode: "loop", groupFormula: "", loop: "", loopOnError: "stop",
+      perRecordLock: false, prevRecord: false,
+      ...over,
+    }],
+  });
+  const fields = { 処理状況: { type: "SINGLE_LINE_TEXT", code: "処理状況", label: "処理状況" } };
+  const opt = { pluginZip: ZIP, fields, appId: 1001 };
+  const noField = (r) => r.findings.filter((f) => f.code === "pFormulaField").length;
+
+  // ① 実行条件 NG のメッセージ
+  assert.equal(noField(await core.checkConfig(build({ execCond: '処理状況 <> ""', execNgMessage: "$m_x" }), opt)), 0);
+  // ② 結果メッセージ（$result_* と混ぜても通ること＝ message() に回していない証拠）
+  assert.equal(noField(await core.checkConfig(build({ resultMessage: '$m_x & " " & $result_total' }), opt)), 0);
+  // ③ 選択肢のラベル（型が select のときだけ見る口）
+  assert.equal(noField(await core.checkConfig(build({
+    params: [{ enabled: true, name: "k", source: "input", formula: "" }],
+    inputs: [{ enabled: true, name: "k", label: "区分", type: "select", required: false, defaultFormula: "", options: ["a"], optionsFormula: '"a"', optionLabelsFormula: "$m_x", minValue: "", maxValue: "", minLength: "", maxLength: "" }],
+    sql: "-- @ksql dialect: 1\nDECLARE @k = '';\nUPDATE LAPP_受注 SET 処理状況 = @k WHERE 処理状況 = '';",
+  }), opt)), 0);
+
+  // 書けない口では今までどおり止まる（本体の message:slot と、文脈に無いことの両方）
+  const bad = await core.checkConfig(build({ showCond: "$m_x" }), opt);
+  assert.equal(bad.status, "invalid");
+  assert.ok(bad.findings.some((f) => String(f.message).includes("message:slot")), JSON.stringify(bad.findings));
+});

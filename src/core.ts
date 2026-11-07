@@ -155,20 +155,33 @@ interface FormulaSlot {
   message?: true;
 }
 
-function formulaSlots(action: Record<string, unknown>): Array<FormulaSlot> {
+/**
+ * 式の口を集める。
+ *
+ * **`gates` は「設定画面が見ない口は tools も見ない」ため**（2026-11-07 の対応漏れの洗い出し）。
+ * 本体は `groupFormula` を**「グループごと」のときだけ**、`loop` を **`hasLoop` のときだけ**検査する。
+ * 条件なしで見ると、**渡し方をグループごとから変えた後の残りかす**のような
+ * 「残っているだけで効かない式」が tools だけで保存を止める。
+ * 本体が入力項目の選択肢の式で同じ判断をしている（`dialogs.ts`:
+ * 「型に合わない値は『消さずに残す』方針なので、残っているだけで効かない式が保存を止めるのは筋が通らない」）。
+ * **S6 で分かったとおり、エラーが 1 つあると `kact_update_action` は何も書けなくなる**ので実害がある。
+ */
+function formulaSlots(action: Record<string, unknown>, gates: { grouped: boolean; looped: boolean }): Array<FormulaSlot> {
   const slots: FormulaSlot[] = [
     { where: "showCond（表示条件）", raw: String(action.showCond ?? "") },
     { where: "execCond（実行条件）", raw: String(action.execCond ?? "") },
     // 共通の文を書ける口（本体は `formulaContext.message(base)` で検査する）
     { where: "execNgMessage（実行条件 NG のメッセージ）", raw: String(action.execNgMessage ?? ""), message: true },
-    { where: "groupFormula（分ける式）", raw: String(action.groupFormula ?? "") },
+    // 分ける式は「グループごと」のときだけ（本体の `isSelectionGrouped`）
+    ...(gates.grouped ? [{ where: "groupFormula（分ける式）", raw: String(action.groupFormula ?? "") }] : []),
     { where: "resultMessage（結果メッセージ）", raw: String(action.resultMessage ?? "") },
     /**
      * **ループの式**（本体の `dialogs.ts` も検査している。2026-11-06 の Codex レビュー MAJOR 2）。
      * 文脈は起動の形で決まる `base` のままで、**`$val` / `$lno` は足さない**
-     * （回数を決める式そのものなので、回の値は使えない。`loop` の章）
+     * （回数を決める式そのものなので、回の値は使えない。`loop` の章）。
+     * 本体と同じく **`hasLoop` のときだけ**見る
      */
-    { where: "loop（ループの式）", raw: String(action.loop ?? "") },
+    ...(gates.looped ? [{ where: "loop（ループの式）", raw: String(action.loop ?? "") }] : []),
   ];
   /**
    * **無効の行（`enabled: false`）は検査しない**（本体の `dialogs.ts` の `structuralProblems` と `paramRule` と同じ）。
@@ -220,7 +233,13 @@ const NOT_A_FIELD_CODE = /[\s"'。、，．！？!?]/;
 export interface FormulaContexts {
   record: { pp: unknown; crec: unknown };
   none: { pp: unknown; crec: unknown };
-  result: (base: "record" | "none") => { pp: unknown; crec: unknown };
+  /**
+   * 結果メッセージの文脈（`$result_*` が使える）。**第 2 引数はループかどうか**で、
+   * 真のときだけ `$result_runs` / `$result_ok_runs` / `$result_failed_runs` / `$result_skipped` が足される
+   * （本体の `RESULT_LOOP_FIELDS`。ループでないアクションに足すと、値の無い変数を書いた式が
+   * 実行時に失敗して結果メッセージが黙って空になるため）
+   */
+  result: (base: "record" | "none", loop?: boolean) => { pp: unknown; crec: unknown };
   /**
    * **ループのあるアクションのパラメーターの文脈**（`$val` / `$lno` が使える。本体の `formula-check.ts`）。
    * 2026-11-06 の Codex レビュー MAJOR 3: ここを使っていなかったので、
@@ -300,17 +319,35 @@ function checkFormulas(engine: Engine, actions: Array<Record<string, unknown>>, 
      * 版 4 までの zip には口が無いので、そのときはこれまでどおりの文脈で見る
      */
     const loopApi = (engine.api as { hasLoop?: (a: unknown) => boolean }).hasLoop;
-    const looped = typeof loopApi === "function" && loopApi(action) && typeof contexts?.loopParam === "function";
+    /**
+     * ループのアクションか（本体の `hasLoop`）。**結果メッセージの文脈にも要る**:
+     * `$result_runs` / `$result_ok_runs` / `$result_failed_runs` / `$result_skipped` は
+     * **ループのときだけ**足される擬似項目で（本体の `RESULT_LOOP_FIELDS`。仕様 §5.7）、
+     * 渡さないと**設定画面は通すのに tools だけが「無い項目」で拒む**
+     * （2026-11-07 の対応漏れの洗い出しで見つけた。本体は 2026-11-05 の Codex レビュー MAJOR 13 で直済み）
+     */
+    const isLooped = typeof loopApi === "function" && loopApi(action);
+    const looped = isLooped && typeof contexts?.loopParam === "function";
+    /**
+     * 「グループごと」か（本体の `isSelectionGrouped`。API 版 1 からある）。
+     * `loop` の口は、**`hasLoop` の無い古い zip では今までどおり見る**（判定を写さないため）
+     */
+    const groupedApi = (engine.api as { isSelectionGrouped?: (a: unknown) => boolean }).isSelectionGrouped;
+    const gates = {
+      grouped: typeof groupedApi === "function" ? groupedApi(action) : true,
+      looped: typeof loopApi === "function" ? isLooped : true,
+    };
     /** パラメーターの文脈（`keys` は常にレコード、ほかは起動の形で決まる `base`） */
     const paramContext = (keys: boolean): { pp: unknown; crec: unknown } => {
       const kind: "record" | "none" = keys ? "record" : base;
       return looped ? contexts!.loopParam!(kind) : contexts![kind];
     };
-    for (const slot of formulaSlots(action)) {
+    for (const slot of formulaSlots(action, gates)) {
       const context = !contexts
         ? emptyContext
         : slot.where.startsWith("resultMessage")
-          ? contexts.result(base)
+          // ループのときだけ使える `$result_runs` ほかを足す（本体の dialogs.ts と同じ）
+          ? contexts.result(base, isLooped)
           : slot.where.startsWith("groupFormula")
             ? contexts.record // 分ける式はレコードごとに評価する（本体の groupContext）
             : slot.message && contexts.message

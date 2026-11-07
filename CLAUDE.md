@@ -58,6 +58,31 @@
 zip の読み取り（2 層・zip bomb・CRC の確認）、エンジンの読み込み（happy-dom、`moment` → `moment-timezone` → `bignumber` → `decimal` → 計算式エンジン → オーサリング API の順、`kintone` と `cybozu` のスタブ）、**ファイルの確定とロック**、**接続のファイルの読み取りと GET だけの REST** の作りは向こうが正本です（Codex のレビューを何度も通している）。
 直すときは向こうの変更も見る。
 
+## 計算式の検査は、本体の設定画面と 1 対 1 に保つ
+
+`src/core.ts` の `formulaSlots` / `checkFormulas` は、**本体の `ksql-action/src/config/dialogs.ts` の
+`push(…)` の並びと同じ**でなければならない（**どの口を・どの文脈で・どんな条件のときに見るか**の 3 つとも）。
+ここがずれると、**設定画面では保存できる設定を tools だけが拒む**（またはその逆）。
+2026-11-07 の試用と洗い出しで、このずれが **5 件**見つかった:
+
+| ずれていたもの | 症状 |
+|---|---|
+| `loadFormulaContext` に `messages` を渡していない | 共通の文を使う設定が**ひとつも保存できない** |
+| `execNgMessage` / `optionLabelsFormula` が `message(base)` でない | 同上 |
+| `result(base)` に**ループかどうかを渡していない** | `$result_runs` ほかが「無い項目」になる |
+| `groupFormula` を条件なしで見る | 渡し方を変えた後の**残りかす**が保存を止める |
+| `loop` を条件なしで見る | 同上 |
+
+**守り方**:
+
+- 文脈は**本体の口に決めさせる**（`loadFormulaContext` の返りの `record` / `none` / `result(base, loop)` /
+  `loopParam(base)` / `message(base)`）。tools で組み立てない。
+- 「見るかどうか」の条件も**本体の口で判定する**（`hasLoop` / `isSelectionGrouped` / `input.type === "select"`）。
+  **「残っているだけで効かない式」は見ない**のが本体の方針（`dialogs.ts` の注記）。
+  **S6 のとおりエラーが 1 つあると `kact_update_action` は何も書けなくなる**ので、
+  厳しすぎる検査はそれだけで設定を編集不能にする。
+- 口を足す・文脈を変えたら、**`test/core.test.mjs` に「その口が通る形」と「通らない形」を 1 組**足す。
+
 ## 式の試し計算（`kact_try`）
 
 - 評価は**本体の API（版 4）に任せる**（`evalFormula` / `evalCondition` / `toParamValue` / `withResultRecord`。
