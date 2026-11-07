@@ -407,7 +407,7 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
       inputSchema: {
         file: z.string().min(1).max(200).describe("作業フォルダーからの相対パス"),
         expectedDigest: z.string().min(16).max(128).describe("kact_actions か kact_files が返した digest"),
-        action: z.record(z.unknown()).describe("アクション（code は必須。足りないキーは既定値で埋まる）"),
+        action: z.record(z.unknown()).describe("アクション（code は必須。**同じコードの行があれば、渡したキーだけを重ねる**ので変えるキーだけでよい。コードが無ければ末尾に足し、そのとき足りないキーは既定値で埋まる）"),
         replaceCode: z.string().min(1).max(64).optional().describe("差し替える相手のコード（コードを変えるときだけ。省略すると action.code と同じ行）"),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },

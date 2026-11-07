@@ -308,10 +308,12 @@ function checkFormulas(engine: Engine, actions: Array<Record<string, unknown>>, 
       }
       if (unknown) {
         // 項目定義があるので「項目が無い」は本当の誤り（名前だけ出す。式は出さない）
+        const name = (unknown[1] ?? "").slice(0, 64);
         findings.push({
           level: "error",
           code: "pFormulaField",
-          message: `${slot.where}: 「${(unknown[1] ?? "").slice(0, 64)}」という項目も関数も無い（項目コードで書く。表示名ではない。使えない文脈のことも）`,
+          message: `${slot.where}: 「${name}」という項目も関数も無い（項目コードで書く。表示名ではない。使えない文脈のことも）`
+            + renameHint(name),
           ...at,
         });
         continue;
@@ -747,6 +749,30 @@ export function nowhereShownFindings(
     });
   }
   return out;
+}
+
+/**
+ * 「項目が無い」と言われた名前が、**改名された擬似項目**なら、その旨を添える
+ * （2026-11-07 の試用 S6）。
+ *
+ * 結果の変数は**オーサリング API 版 6（2026-11-06）で `_result_*` から `$result_*` に変わった**
+ * （`_` は kintone の項目コードに使えるので、`_result_total` という項目があると黙って上書きされていた）。
+ * **`migrateConfig` に書き換えは無い**ので、版 6 より前に作った設定はそのまま残る。
+ * そのとき出るのは「`_result_total` という項目も関数も無い」で、**改名されたことが分からない**
+ * （実際に 4377 の既存アクションで詰まった）。
+ *
+ * ループの `$val` / `$lno` も、口を間違えると同じ「項目が無い」になるので一緒に見る。
+ */
+function renameHint(name: string): string {
+  if (/^_result_/i.test(name)) {
+    return `。**結果の変数は \`$result_*\` に変わりました**（オーサリング API 版 6・2026-11-06）。`
+      + `\`${name}\` は \`$${name.replace(/^_/, "")}\` と書きます`
+      + `（古い設定は自動では直らないので、\`resultMessage\` を書き替えてください）`;
+  }
+  if (/^_(val|lno)$/i.test(name) || /^\$?(val|lno)$/i.test(name)) {
+    return "。**`$val` / `$lno` はループ（`loop`）のパラメーターの式だけ**で使えます（ほかの口に書くと「項目が無い」になります。`kact_docs` の section loop）";
+  }
+  return "";
 }
 
 /** 行コメント（`--` から行末）を外した SQL。語の有無で判定するときに使う */

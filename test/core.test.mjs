@@ -608,3 +608,37 @@ test("checkConfig: 問題の文は本体の文言で出す（版 9。コード�
   assert.ok(message.length > 20, `文が短すぎる: ${message}`);
   if (process.env.KACT_SHOW_MESSAGE) console.log(`    [版 9 の文] ${message}`);
 });
+
+// 2026-11-07 の試用 S6: 結果の変数は API 版 6 で `_result_*` → `$result_*` に変わったが、
+// migrateConfig に書き換えが無いので版 6 より前の設定はそのまま残る。
+// そのとき出るのは「`_result_total` という項目も関数も無い」だけで、**改名が分からない**
+test("checkConfig: 古い `_result_*` には改名を案内する", { skip }, async () => {
+  const build = (formula) => envelope({
+    configVersion: 1, bindings: [{ name: "受注", appId: 1001 }],
+    limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+    timezone: "",
+    panel: { title: "", sectionColumns: 1, buttonWidth: 200, buttonLogLink: false, sections: [], views: [{ viewId: "*", sections: [""], menus: [], open: false }] },
+    actions: [{
+      enabled: true, code: "old", name: "古い結果メッセージ", description: "", type: "record", onList: false,
+      placements: ["detail_menu"], panelSection: "", showCond: "", execCond: "", execNgMessage: "",
+      params: [], inputs: [], sql: "-- @ksql dialect: 1\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 処理状況 = '';",
+      staticInsertRows: 0, confirm: true, writeLimit: 1, refreshPrompt: "auto", allowed: [], allowAll: true,
+      resultMessage: formula, listOnError: "continue", selectionMode: "loop", groupFormula: "",
+      loop: "", loopOnError: "stop", perRecordLock: false, prevRecord: false,
+    }],
+  });
+  // 項目定義の控えが要る（無いと構文だけ見るので「項目が無い」にならない）
+  const fields = { 処理状況: { type: "SINGLE_LINE_TEXT", code: "処理状況", label: "処理状況" } };
+  const opt = { pluginZip: ZIP, fields, appId: 1001 };
+
+  const old = await core.checkConfig(build('"済みました（" & _result_total & " 件）"'), opt);
+  const f = old.findings.find((x) => x.code === "pFormulaField");
+  assert.ok(f, JSON.stringify(old.findings));
+  assert.match(f.message, /\$result_\*/, "改名の案内を添える");
+  assert.match(f.message, /\$result_total/, "直した形を見せる");
+  assert.match(f.message, /版 6/);
+
+  // 新しい名前なら誤りにしない
+  const now = await core.checkConfig(build('"済みました（" & $result_total & " 件）"'), opt);
+  assert.equal(now.findings.filter((x) => x.code === "pFormulaField").length, 0, JSON.stringify(now.findings));
+});
