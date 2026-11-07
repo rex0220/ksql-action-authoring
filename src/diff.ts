@@ -154,6 +154,18 @@ export function actionDiff(code: string, before: Obj | undefined, after: Obj | u
     return out;
   }
   const at = `アクション ${code} / `;
+  /**
+   * **コードが変わったことを必ず出す**（2026-11-07 の試用 S8）。
+   *
+   * `kact_diff` はコードで突き合わせるので、対になった 2 つのコードは必ず同じ＝この行は出ない。
+   * 出るのは **`kact_update_action` の `replaceCode` で改名したとき**だけ。
+   * コードは**ロックキーとログの名前**なので、設定の中でいちばん重い変更なのに、
+   * `ACTION_SCALARS` に無いせいで `changes` から落ちていた
+   * （改名したのに `name` の変更しか出ず、利用者に見せる物として足りない）。
+   */
+  if (String(before.code ?? "") !== String(after.code ?? "")) {
+    out.push(`${at}code: ${show(before.code)} → ${show(after.code)}（**ロックキーとログの名前が変わります**。過去のログとの対応は切れます）`);
+  }
   scalarDiffs(before, after, ACTION_SCALARS, out, at);
   for (const k of ACTION_LISTS) {
     const b = k === "params" || k === "inputs" ? dropDefaultEnabled(before[k]) : before[k];

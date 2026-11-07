@@ -420,3 +420,46 @@ test("saveConfig: ほかのアプリの選択肢に無い値で絞ると注意�
   const ok = await save.saveConfig({ file: "settings/kact-choice-ok.json", appId: 1002, appName: "請求", config: cfg("対象") }, opt);
   assert.equal(ok.findings.filter((f) => f.code === "choice-unknown").length, 0, JSON.stringify(ok.findings));
 });
+
+// 2026-11-07 の試用 S8: replaceCode で改名すると、いちばん重い変更（コード＝ロックキーと
+// ログの名前）が `changes` から落ちていた。`code` が ACTION_SCALARS に無いため
+test("updateAction: replaceCode の改名は changes にコードの変更を出す", { skip }, async () => {
+  const cfg = {
+    bindings: [{ name: "受注", appId: 1001 }],
+    actions: [
+      { code: "keep", name: "残す", type: "app", params: [], sql: "-- @ksql dialect: 1\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 処理状況 = '';" },
+      { code: "old_code", name: "集計を再計算", type: "app", panelSection: "", params: [], sql: "-- @ksql dialect: 1\nUPDATE LAPP_受注 SET 処理状況 = 'A' WHERE 処理状況 = '';" },
+    ],
+  };
+  const saved = await save.saveConfig({ file: "settings/kact-rename.json", appId: 1001, appName: "受注", config: cfg }, opt);
+  assert.equal(saved.status, "ok", JSON.stringify(saved.findings));
+
+  const r = await save.updateAction({
+    file: "settings/kact-rename.json",
+    expectedDigest: saved.digest,
+    replaceCode: "old_code",
+    action: { code: "recalc", name: "recalc" },
+  }, opt);
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  assert.match(r.changes, /code: old_code → recalc/, "コードの変更を出す");
+  assert.match(r.changes, /ロックキーとログの名前/, "何が起きるかを添える");
+  assert.match(r.changes, /name: 集計を再計算 → recalc/, "ほかの変更も今までどおり出す");
+
+  // 中身は保たれている（マージなので SQL も区分もそのまま）
+  const env = JSON.parse(readFileSync(join(ws, "settings/kact-rename.json"), "utf8"));
+  const renamed = env.actions.find((a) => a.code === "recalc");
+  assert.ok(renamed, "改名後のコードで見つかる");
+  assert.equal(env.actions.find((a) => a.code === "old_code"), undefined, "古いコードは残らない");
+  assert.match(renamed.sql, /処理状況 = 'A'/, "SQL は保たれる");
+  assert.equal(env.actions.map((a) => a.code).join(","), "keep,recalc", "並びも保たれる");
+
+  // コードが変わっていなければ、その行は出ない
+  const files2 = await save.filesOf(opt);
+  const d2 = files2.files.find((f) => f.path === "settings/kact-rename.json").digest;
+  const same = await save.updateAction({
+    file: "settings/kact-rename.json", expectedDigest: d2,
+    action: { code: "recalc", name: "再計算" },
+  }, opt);
+  assert.equal(same.status, "ok", JSON.stringify(same.findings));
+  assert.ok(!/code:/.test(same.changes), `コードが同じなら出さない: ${same.changes}`);
+});
