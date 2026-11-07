@@ -2,6 +2,44 @@
 
 kact（Claude Desktop の拡張機能「kSQL アクション 設定オーサリング」と、Claude Code のプラグイン `ksql-action`）の、利用者に見える変更です。新しい版が上です。
 
+## 0.12.0（2026-11-07）
+
+**共通の文（`$m_…`）を使う式を `kact_try` で試せるようになりました。**
+
+これまでは、`messages` に正しく定義した文でも
+
+```
+$m_done → getVal FIELD CODE NOT FOUND: $m_done
+```
+
+で落ちていました。試し計算のときだけ共通の文を渡しておらず、`$m_…` という擬似項目が
+1 つも無い状態で評価していたためです（検査〈`kact_check`〉は 0.11.1 で直していましたが、
+試し計算に同じ穴が残っていました）。
+
+### 使い方
+
+`file`（設定ファイル）と、式ごとの `slot`（どの口に書く式か）を渡します。
+
+```jsonc
+{
+  "app": 1001,
+  "file": "settings/kact-1001.json",
+  "formulas": [
+    { "formula": "REPLACE($m_done, \"{n}\", $result_total)", "slot": "resultMessage" }
+  ],
+  "result": { "$result_total": 12 }
+}
+// → "12 件を書き込みました"
+```
+
+- 文は**設定ファイルから読みます**（文そのものは返りません）。`lang` で `ja` / `en` / `zh` を切り替えられます。
+- **`slot` を書くと、その口で本当に使える擬似項目だけ**で評価します
+  （`$m_…` は `execNgMessage` / `resultMessage` / `optionLabelsFormula` の 3 つだけ、
+  `$result_*` は `resultMessage` だけ、`$val` / `$lno` はパラメーターの式だけ）。
+  **`kact_try` では通るのに `kact_check` が拒む式**を作れないようにするためです。
+- 使えない口に値を渡したときは、入れずに `slot-not-allowed` で**どこなら書けるか**を返します（黙って落としません）。
+- `slot` を書かない式はこれまでどおりです（`$m_…` は入らず、`slot-missing` で知らせます）。
+
 ## 0.11.3（2026-11-07）
 
 **0.11.2 で足した「領域（ゲストスペース）の検査」が、いちばん肝心な場合に効いていませんでした。**
