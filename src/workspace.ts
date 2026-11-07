@@ -67,8 +67,24 @@ export function workspaceStatus(env: NodeJS.ProcessEnv = process.env): Workspace
   return { dir, files, pluginZipConfigured: !!env.KACT_PLUGIN_ZIP?.trim() };
 }
 
-/** 書く先の上限（設定ファイルは大きくても数十 KB。プラグイン設定の上限は 256 KB） */
-export const MAX_CONFIG_BYTES = 512 * 1024;
+/**
+ * 設定ファイルの**生のバイト数**の上限（**読み込み防御**であって、kintone の壁ではない）。
+ *
+ * **kintone の壁は「圧縮後 256 KB」**（公式の `kintone.plugin.app.setConfig` の制限事項。
+ * 1 値 65,535 文字・1 プラグイン合計 256 KB）で、それは `kact_check` の `config-too-large` が
+ * 本体の `measureConfigBytes` で測る。**生のバイト数はその代用にならない**。
+ *
+ * 512 KB にしていたが、**kintone が受け付ける正当な設定を断っていた**（2026-11-07 の再判断）:
+ *
+ * | 設定 | 生 | 圧縮後 |
+ * |---|---|---|
+ * | 現実的（50 アクション・日本語の SQL） | **78 KB** | 256 KB 以内 |
+ * | スキーマ上限いっぱい（SQL 19,916 字 × 50。繰り返しの多い日本語） | **2,790 KB** | **256 KB 以内＝ kintone は受け付ける** |
+ *
+ * つまり 512 KB は現実的な設定には効かず、効くのは**誤って拒む場合だけ**だった。
+ * kit の `maxDecodedLength`（展開後 4 MB）に揃える。
+ */
+export const MAX_CONFIG_BYTES = 4 * 1024 * 1024;
 
 /**
  * **これから書く**ファイルの実パス（kact_save_config / kact_pull）。読むときの resolveInWorkspace と違い、

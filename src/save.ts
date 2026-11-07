@@ -262,7 +262,7 @@ export async function saveConfig(input: SaveConfigInput, opt: LoadEngineOptions 
     (input.now ?? (() => new Date()))(),
   ) as Record<string, unknown>;
   const text = JSON.stringify(envelope);
-  if (Buffer.byteLength(text, "utf8") > MAX_CONFIG_BYTES) return fail("too-large", `設定が大きすぎる（${MAX_CONFIG_BYTES.toLocaleString()} バイトまで）`, "invalid");
+  if (Buffer.byteLength(text, "utf8") > MAX_CONFIG_BYTES) return fail("too-large", `設定ファイルが大きすぎる（生のバイト数で ${MAX_CONFIG_BYTES.toLocaleString()} バイトまで）。これは読み込みの防御で、**kintone の壁ではない**（壁は圧縮後 256 KB で、検査の config-too-large が見る）`, "invalid");
 
   const checked = await checkOrFail(text, opt);
   if (!checked.ok) return checked.result;
@@ -332,7 +332,7 @@ export async function updateAction(input: UpdateActionInput, opt: LoadEngineOpti
   const nextActions = at >= 0 ? actions.map((a, i) => (i === at ? next : a)) : [...actions, next];
 
   const text = JSON.stringify({ ...envelope, date: formatDate((input.now ?? (() => new Date()))()), ...bodyOf({ ...body, actions: nextActions }) });
-  if (Buffer.byteLength(text, "utf8") > MAX_CONFIG_BYTES) return fail("too-large", `設定が大きすぎる（${MAX_CONFIG_BYTES.toLocaleString()} バイトまで）`, "invalid");
+  if (Buffer.byteLength(text, "utf8") > MAX_CONFIG_BYTES) return fail("too-large", `設定ファイルが大きすぎる（生のバイト数で ${MAX_CONFIG_BYTES.toLocaleString()} バイトまで）。これは読み込みの防御で、**kintone の壁ではない**（壁は圧縮後 256 KB で、検査の config-too-large が見る）`, "invalid");
 
   const checked = await checkOrFail(text, opt);
   if (!checked.ok) return checked.result;
@@ -457,7 +457,7 @@ export async function pullConfig(input: PullInput, opt: LoadEngineOptions = {}):
   } catch (e) {
     return fromWorkspaceError(e);
   }
-  if (statSync(from).size > MAX_CONFIG_BYTES) return fail("too-large", `ファイルが大きすぎる（${MAX_CONFIG_BYTES.toLocaleString()} バイトまで）`, "invalid");
+  if (statSync(from).size > MAX_CONFIG_BYTES) return fail("too-large", `ファイルが大きすぎる（生のバイト数で ${MAX_CONFIG_BYTES.toLocaleString()} バイトまで）。これは読み込みの防御で、**kintone の壁ではない**（壁は圧縮後 256 KB）`, "invalid");
   const text = readFileSync(from, "utf8");
 
   // kSQL アクションの設定か（封筒の pluginID と形）。ここで落ちるものは写さない

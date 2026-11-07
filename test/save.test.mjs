@@ -520,3 +520,29 @@ test("diffConfigs: 記録範囲と記録先の変更が差分に出る", () => {
   const gone = diffConfigs(env("failed"), { ...env("failed"), logApp: undefined });
   assert.match(gone, /ログアプリ: あり → 無し/, gone);
 });
+
+// 2026-11-07 の再判断: 生のファイルの上限 512 KB が、**kintone が受け付ける設定を断っていた**。
+// kintone の壁は「圧縮後 256 KB」（公式の setConfig の制限事項）で、生のバイト数は代用にならない。
+// スキーマ上限いっぱい（SQL 約 20,000 字 × 50）でも、繰り返しの多い日本語なら圧縮後は壁に収まる
+test("saveConfig: kintone が受け付ける大きさの設定を、生のバイト数で断らない", { skip }, async () => {
+  const head = "-- @ksql dialect: 1\nDECLARE @cust = '';\n";
+  const line = "-- 顧客ごとの売上を集計して集計アプリへ書き戻す。請求対象が「対象」のものだけを数える。\n";
+  const sql = head + line.repeat(Math.floor((19900 - head.length) / line.length))
+    + "UPDATE LAPP_受注 SET 処理状況 = '済' WHERE 顧客コード = @cust;";
+  const config = {
+    bindings: [{ name: "受注", appId: 1001 }],
+    actions: Array.from({ length: 50 }, (_, n) => ({
+      code: `a${n}`, name: `A${n}`, type: "record", placements: ["detail_menu"],
+      params: [{ name: "cust", source: "formula", formula: "顧客コード" }],
+      sql, confirm: true, writeLimit: 5,
+    })),
+  };
+  const text = JSON.stringify(config);
+  assert.ok(Buffer.byteLength(text, "utf8") > 512 * 1024, "前の上限（512 KB）は超えている");
+
+  const r = await save.saveConfig({ file: "settings/kact-big-ok.json", appId: 1001, appName: "受注", config }, opt);
+  assert.notEqual(r.status, "invalid", JSON.stringify(r.findings?.map((f) => f.code)));
+  assert.equal(r.findings.filter((f) => f.code === "too-large" || f.code === "config-too-large").length, 0,
+    JSON.stringify(r.findings));
+  assert.equal(existsSync(join(ws, "settings/kact-big-ok.json")), true, "書けている");
+});
