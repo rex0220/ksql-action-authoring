@@ -384,3 +384,40 @@ test("connectionReport: 設定が無ければ configured: false（検査と保�
   assert.equal(r.findings[0].code, "connection-not-configured");
   assert.equal(r.findings[0].level, "info");
 });
+
+// 2026-11-07 の Codex レビュー: 控えが接続先と動作環境を区別していなかった。
+// 接続先が違えば同じアプリ番号は別のアプリなのに、fetchedAt が新しいものを黙って採り、
+// 動作テスト環境の控えは運用環境の控えを同じ名前で上書きしていた
+test("findFieldsFile: 動作テスト環境は別ファイル、ほかの候補は others で知らせる", { skip }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "kact-cache-"));
+  const put = (profile, appId, preview, fetchedAt, code) => {
+    mkdirSync(join(dir, "fields", profile), { recursive: true });
+    writeFileSync(join(dir, "fields", profile, `APP${appId}${preview ? "-preview" : ""}.json`), JSON.stringify({
+      tool: "kact fields", fetchedAt, profile, host: "example.cybozu.com",
+      appId, appName: "受注", revision: "1", preview,
+      properties: { [code]: { type: "SINGLE_LINE_TEXT", code, label: code } },
+    }));
+  };
+
+  // 同じアプリ番号が 2 つの接続にある（別のアプリ）
+  put("dev", 1001, false, "2026-11-07T01:00:00.000Z", "開発の項目");
+  put("prod", 1001, false, "2026-11-07T02:00:00.000Z", "本番の項目");
+  const two = fields.findFieldsFile(1001, dir);
+  assert.ok(two, "見つかる");
+  assert.equal(two.others.length, 1, "もう 1 つあることを知らせる");
+  assert.ok(two.others[0].includes("APP1001"), two.others.join(","));
+
+  // 動作テスト環境は運用環境を上書きしない（別ファイル）
+  put("dev", 1002, false, "2026-11-07T01:00:00.000Z", "運用の項目");
+  put("dev", 1002, true, "2026-11-07T03:00:00.000Z", "テストの項目");
+  const both = fields.findFieldsFile(1002, dir);
+  assert.ok(Object.keys(both.file.properties).includes("運用の項目"), "新しくても運用環境を優先する");
+  assert.equal(both.file.preview, false);
+  assert.ok(both.others.some((p) => p.includes("-preview")), both.others.join(","));
+
+  // 運用環境の控えが無ければ動作テスト環境を使う
+  put("dev", 1003, true, "2026-11-07T01:00:00.000Z", "テストだけ");
+  const onlyPreview = fields.findFieldsFile(1003, dir);
+  assert.equal(onlyPreview.file.preview, true);
+  assert.equal(onlyPreview.others.length, 0);
+});

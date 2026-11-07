@@ -70,6 +70,7 @@ function checkOptions(text: string): {
   appsFields?: Record<string, Record<string, unknown>>;
   appId?: number;
   fieldsPath?: string;
+  fieldsOthers?: string[];
 } {
   const base = zipOptions();
   let appId = 0;
@@ -84,7 +85,7 @@ function checkOptions(text: string): {
   if (!Number.isSafeInteger(appId) || appId <= 0) return { ...base, ...withApps };
   const found = findFieldsFile(appId);
   return found
-    ? { ...base, ...withApps, fields: found.file.properties, appId, fieldsPath: found.path }
+    ? { ...base, ...withApps, fields: found.file.properties, appId, fieldsPath: found.path, fieldsOthers: found.others }
     : { ...base, ...withApps };
 }
 
@@ -275,7 +276,7 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
     {
       title: "kact: kintone の項目定義を取る",
       description:
-        "アプリの項目定義（項目コード・型・ラベル・値の重複を禁止するか・テーブルの子）を kintone から**読み取り（GET）だけ**で取り、作業フォルダーの fields/<profile>/APP<番号>.json に控えて 1 項目 1 行の要約を返す。" +
+        "アプリの項目定義（項目コード・型・ラベル・値の重複を禁止するか・テーブルの子）を kintone から**読み取り（GET）だけ**で取り、作業フォルダーの fields/<profile>/APP<番号>.json（動作テスト環境は APP<番号>-preview.json）に控えて 1 項目 1 行の要約を返す。" +
         "**SQL と計算式には項目コードを書く**（表示名ではない）。取った後は kact_check と保存のツールが計算式を**項目コードまで検査**する（それまでは引用符・括弧の対応だけ）。" +
         "レコードの値は読まない。接続は利用者が設定した接続のファイルの profile だけで、ファイルの場所と秘密の値は返さない。結果を推し量らず、このツールで確かめる。",
       inputSchema: {

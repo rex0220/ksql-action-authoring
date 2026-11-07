@@ -332,15 +332,22 @@ export function summarizeFields(properties: Record<string, FieldProperty>): Fiel
   return out;
 }
 
-/** 控えの置き場所（作業フォルダーからの相対パス） */
-export function fieldsPathFor(profile: string, appId: number): string {
-  return `fields/${profile}/APP${appId}.json`;
+/**
+ * 控えの置き場所（作業フォルダーからの相対パス）。
+ *
+ * **動作テスト環境（`preview`）は別のファイル**にする（2026-11-07 の Codex レビュー）。
+ * 同じ名前にしていたので、`kact_fields` を `preview: true` で呼ぶと
+ * **運用環境の控えを黙って上書き**していた（中の `preview` の印だけが変わる）。
+ * 設定画面が見るのは動作テスト環境なので、どちらも持てる形にする。
+ */
+export function fieldsPathFor(profile: string, appId: number, preview = false): string {
+  return `fields/${profile}/APP${appId}${preview ? "-preview" : ""}.json`;
 }
 
 /** 控えを読む（無ければ undefined。壊れていても undefined） */
-export function readFieldsFile(profile: string, appId: number, dir?: string): FieldsFile | undefined {
+export function readFieldsFile(profile: string, appId: number, dir?: string, preview = false): FieldsFile | undefined {
   const base = dir ?? workspaceDir();
-  const file = path.join(base, fieldsPathFor(profile, appId));
+  const file = path.join(base, fieldsPathFor(profile, appId, preview));
   if (!existsSync(file)) return undefined;
   try {
     const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
@@ -354,24 +361,39 @@ export function readFieldsFile(profile: string, appId: number, dir?: string): Fi
 
 /**
  * そのアプリの控えを探す（profile が分からなくても使えるように `fields/<どれか>/APP<番号>.json` を見る）。
- * 複数あれば**新しいもの**を使う。`kact_check` と保存のツールは、これがあれば計算式を項目コードまで検査する
+ *
+ * **接続先が違えば、同じアプリ番号は普通に別のアプリ**なので、複数見つかったことを黙って
+ * 握りつぶさない（2026-11-07 の Codex レビュー。それまでは `fetchedAt` が新しいものを黙って採る作りで、
+ * 誤った項目定義で検査しても返りは `formulaCheck: fields` としか出なかった）。
+ *
+ * 選び方: **運用環境の控えを先に見て**、無ければ動作テスト環境。同じ段で複数あれば
+ * 新しいものを採るが、**`others` にほかの候補を入れて呼び側が知らせられるようにする**。
  */
-export function findFieldsFile(appId: number, dir?: string): { file: FieldsFile; path: string } | undefined {
+export function findFieldsFile(
+  appId: number,
+  dir?: string,
+): { file: FieldsFile; path: string; others: string[] } | undefined {
   const base = dir ?? workspaceDir();
   const root = path.join(base, "fields");
   if (!existsSync(root)) return undefined;
-  let best: { file: FieldsFile; path: string } | undefined;
+  const found: Array<{ file: FieldsFile; path: string; preview: boolean }> = [];
   try {
     for (const entry of readdirSync(root, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
-      const found = readFieldsFile(entry.name, appId, base);
-      if (!found) continue;
-      if (!best || String(found.fetchedAt) > String(best.file.fetchedAt)) best = { file: found, path: fieldsPathFor(entry.name, appId) };
+      for (const preview of [false, true]) {
+        const f = readFieldsFile(entry.name, appId, base, preview);
+        if (f) found.push({ file: f, path: fieldsPathFor(entry.name, appId, preview), preview });
+      }
     }
   } catch {
     return undefined;
   }
-  return best;
+  if (found.length === 0) return undefined;
+  // 運用環境を優先し、その中で新しいもの（無ければ動作テスト環境で同じ選び方）
+  const tier = found.some((f) => !f.preview) ? found.filter((f) => !f.preview) : found;
+  tier.sort((a, b) => String(b.file.fetchedAt).localeCompare(String(a.file.fetchedAt)));
+  const best = tier[0]!;
+  return { file: best.file, path: best.path, others: found.filter((f) => f.path !== best.path).map((f) => f.path) };
 }
 
 /**
@@ -413,7 +435,8 @@ export async function fetchFields(input: { app: number; profile?: string; previe
     preview: !!input.preview,
     properties,
   };
-  const rel = fieldsPathFor(def.profile, input.app);
+  // 動作テスト環境は別のファイル（運用環境の控えを上書きしない）
+  const rel = fieldsPathFor(def.profile, input.app, !!input.preview);
   let target: string;
   try {
     target = resolveNewInWorkspace(rel, opt.workspaceDir ?? workspaceDir(opt.env ?? process.env));

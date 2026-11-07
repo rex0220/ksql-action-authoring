@@ -405,6 +405,12 @@ export interface CheckOptions extends LoadEngineOptions {
   /** 項目定義を渡すときの自アプリの番号（`loadFormulaContext` に渡す。省略時は封筒の appId） */
   appId?: number;
   /**
+   * 自アプリの控えが**ほかにもあった**ときの、その置き場所（`findFieldsFile` の `others`）。
+   * **接続先が違えば同じアプリ番号は別のアプリ**なので、黙って 1 つ選んだことを利用者に知らせる
+   * （2026-11-07 の Codex レビュー。誤った項目定義で検査しても `formulaCheck: fields` としか出なかった）
+   */
+  fieldsOthers?: string[];
+  /**
    * **SQL が触るアプリの項目定義**（`アプリ番号 → properties`。`kact_explain` に渡すのと同じ形）。
    * 選択肢の定義に無い値（`choice-unknown`。API 版 8）を見るための `createFieldsClient` に渡す。
    *
@@ -529,6 +535,20 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
     }
   }
 
+  /**
+   * 同じアプリ番号の控えが 2 つ以上あった（接続先が違う・動作テスト環境と運用環境）。
+   * **黙って 1 つ選ばない**（2026-11-07 の Codex レビュー）
+   */
+  if (opt.fieldsOthers && opt.fieldsOthers.length > 0) {
+    findings.push({
+      level: "warning",
+      code: "fields-ambiguous",
+      message:
+        `同じアプリ番号の項目定義の控えが**ほかにもあります**（${opt.fieldsOthers.join(" / ")}）。`
+        + "**接続先が違えば、同じアプリ番号は別のアプリ**です。"
+        + "返りの `fieldsFrom` が使った控えなので、違う接続・違う環境のものなら `kact_fields` で取り直してください",
+    });
+  }
   // 4 計算式（項目定義があれば設定画面と同じ検査、無ければ構文だけ）
   let contexts: FormulaContexts | undefined;
   if (opt.fields) {

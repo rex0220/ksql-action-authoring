@@ -181,7 +181,7 @@ function withFields(text: string, opt: CheckOptions): CheckOptions {
   if (!Number.isSafeInteger(appId) || appId <= 0) return { ...opt, ...withApps };
   const found = findFieldsFile(appId);
   return found
-    ? { ...opt, ...withApps, fields: found.file.properties, appId }
+    ? { ...opt, ...withApps, fields: found.file.properties, appId, fieldsOthers: found.others }
     : { ...opt, ...withApps };
 }
 
@@ -211,6 +211,31 @@ export async function saveConfig(input: SaveConfigInput, opt: LoadEngineOptions 
   if (isResult(engine)) return engine;
   if (!isObject(input.config)) return fail("input", "config は設定の本体（または封筒）のオブジェクトで渡す", "invalid");
   if (!Number.isInteger(input.appId) || input.appId <= 0) return fail("input", "appId は 1 以上の整数（取り込む先のアプリ。推測せず利用者に聞く）", "invalid");
+  /**
+   * **共通の文（`messages`）はツールからは足せない**（資料 `config` の「共通の文」）。
+   *
+   * 資料はそう断言しているのに**仕組みでは止まっていなかった**（2026-11-07 の Codex レビュー。
+   * 実測で、ツールが作ったコードがそのまま保存できた）。**取り込みは全置換**なので、
+   * AI が思いつきで作った文が**利用者が設定画面で書いた文を丸ごと置き換える**。
+   * 人は資料の決まりを守れるが、**AI はスキーマ上できる操作を選ぶ**ので、ここで止める。
+   *
+   * 直すときは `kact_pull` で取り込んだ設定を `kact_update_action` で直す（あちらは `messages` に触らない）。
+   */
+  const bodyMessages = (() => {
+    const c = input.config as Record<string, unknown>;
+    const body = isObject(c.config) ? (c.config as Record<string, unknown>) : c;
+    return Array.isArray(body.messages) ? body.messages : [];
+  })();
+  if (bodyMessages.length > 0) {
+    return fail(
+      "messages-not-writable",
+      "共通の文（`messages`）はツールからは足せません。**設定画面のツールバーの［メッセージ］**で足してもらってから、"
+      + "［設定をダウンロード］→ `kact_pull` → `kact_update_action` の順で進めてください"
+      + "（取り込みは全置換なので、ツールが作った文は利用者が書いた文を置き換えてしまいます）。"
+      + "今あるコードは `kact_actions` の返りの `messages` で分かります",
+      "invalid",
+    );
+  }
 
   let target: string;
   const dir = (() => {

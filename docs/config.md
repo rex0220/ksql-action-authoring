@@ -60,7 +60,7 @@
 | SQL | `ASSERT` と `EXIT SUCCESS IF` のメッセージだけ。`m_` でない変数をメッセージに書くと error（表示は何も出ないため） |
 | 上限 | 50 件 / 1 つの文は 200 字（4 列とも同じ） |
 
-> **【大事】`messages` はツールからは足せません。**
+> **【大事】`messages` はツールからは足せません**（`kact_save_config` が `messages-not-writable` で**断ります**）。
 > `kact_save_config` / `kact_update_action` は `messages` を作らないので、
 > **利用者に設定画面のツールバーの［メッセージ］で足してもらってください**。
 > 今ある文のコードは **`kact_actions` の返りの `messages`** で分かります（文そのものは返りません）。

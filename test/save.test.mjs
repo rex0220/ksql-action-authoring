@@ -463,3 +463,40 @@ test("updateAction: replaceCode の改名は changes にコードの変更を出
   assert.equal(same.status, "ok", JSON.stringify(same.findings));
   assert.ok(!/code:/.test(same.changes), `コードが同じなら出さない: ${same.changes}`);
 });
+
+// 2026-11-07 の Codex レビュー: 資料は「共通の文はツールからは足せない」と断言しているのに、
+// 仕組みでは止まっていなかった（実測でツールが作ったコードが保存できた）。
+// 取り込みは全置換なので、AI が作った文が利用者の書いた文を置き換えてしまう
+test("saveConfig: 共通の文（messages）はツールからは足せない", { skip }, async () => {
+  const cfg = (messages) => ({
+    bindings: [{ name: "受注", appId: 1001 }],
+    ...(messages ? { messages } : {}),
+    actions: [{
+      code: "m", name: "共通の文", type: "app", params: [],
+      sql: "-- @ksql dialect: 1\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE 処理状況 = '';",
+    }],
+  });
+
+  const ng = await save.saveConfig({
+    file: "settings/kact-msg-ng.json", appId: 1001, appName: "受注",
+    config: cfg([{ code: "m_x", text: "文" }]),
+  }, opt);
+  assert.equal(ng.status, "invalid", JSON.stringify(ng.findings));
+  assert.equal(ng.findings[0].code, "messages-not-writable");
+  assert.match(ng.findings[0].message, /メッセージ/);
+  assert.equal(existsSync(join(ws, "settings/kact-msg-ng.json")), false, "書いていない");
+
+  // 封筒ごと渡しても同じ
+  const wrapped = await save.saveConfig({
+    file: "settings/kact-msg-ng2.json", appId: 1001, appName: "受注",
+    config: { config: cfg([{ code: "m_x", text: "文" }]) },
+  }, opt);
+  assert.equal(wrapped.status, "invalid");
+  assert.equal(wrapped.findings[0].code, "messages-not-writable");
+
+  // 空なら今までどおり通る
+  const ok = await save.saveConfig({
+    file: "settings/kact-msg-ok.json", appId: 1001, appName: "受注", config: cfg(undefined),
+  }, opt);
+  assert.equal(ok.status, "ok", JSON.stringify(ok.findings));
+});
