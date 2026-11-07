@@ -38,8 +38,9 @@ export const MANIFEST_TOOLS = [
   ["kact_apps", "kintone のアプリの一覧（GET だけ）"],
   ["kact_save_config", "新しい設定を検査して保存（上書きしない）"],
   ["kact_update_action", "既存の設定のアクションを差し替える・足す"],
+  ["kact_update_common", "共通設定を直す（論理アプリ・上限・ログアプリ・パネルと区分）"],
   ["kact_delete_action", "既存の設定のアクションを消す"],
-  ["kact_pull", "設定画面でダウンロードした設定を取り込む"],
+  ["kact_pull", "今の設定を取り込む（アプリ番号から直に、またはダウンロードしたファイルから）"],
   ["kact_diff", "2 つの設定の差（SQL は行の差分）"],
 ];
 
