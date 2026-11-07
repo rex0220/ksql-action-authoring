@@ -20,7 +20,7 @@ import { checkConfig,
   explainAction, listActions, statusOf } from "./core.ts";
 import { resolveInWorkspace, workspaceStatus, WorkspaceError } from "./workspace.ts";
 import { deleteAction, digestOf, filesOf, pullConfig, saveConfig, updateAction } from "./save.ts";
-import { connectionReport, fetchFields, findFieldsFile, listApps, listViews, type KintoneOptions } from "./fields.ts";
+import { appsFieldsFrom, connectionReport, fetchFields, findFieldsFile, listApps, listViews, type KintoneOptions } from "./fields.ts";
 import { diffConfigs } from "./diff.ts";
 import { tryFormulas } from "./try.ts";
 import { toolsMeta } from "./meta.ts";
@@ -55,10 +55,22 @@ function kintoneOptions(): KintoneOptions {
 }
 
 /**
- * 検査のときに使う項目定義（`kact_fields` が置いた控え）。封筒の appId で探す。
- * あれば計算式を**項目コードまで**検査し、無ければ構文だけ（返りの `summary.formulaCheck` に出る）
+ * 検査のときに使う項目定義（`kact_fields` が置いた控え）。
+ *
+ * **形の違う 2 つを渡す**（1 つで兼ねられない。`core.ts` の `CheckOptions`）:
+ * - `fields` = **自アプリの `properties`**（キーは項目コード）。計算式を**項目コードまで**検査する
+ *   （無ければ構文だけ。返りの `summary.formulaCheck` に出る）
+ * - `appsFields` = **アプリ番号 → `properties`**（`explainOptions` と同じ形）。
+ *   選択肢の定義に無い値（`choice-unknown`。API 版 8）を見る。**SQL が触るアプリの分が要る**ので
+ *   論理アプリ（`bindings`）から集める（自アプリだけでは、ほかのアプリの選択肢を見られない）
  */
-function checkOptions(text: string): { pluginZip?: string; fields?: Record<string, unknown>; appId?: number; fieldsPath?: string } {
+function checkOptions(text: string): {
+  pluginZip?: string;
+  fields?: Record<string, unknown>;
+  appsFields?: Record<string, Record<string, unknown>>;
+  appId?: number;
+  fieldsPath?: string;
+} {
   const base = zipOptions();
   let appId = 0;
   try {
@@ -67,9 +79,13 @@ function checkOptions(text: string): { pluginZip?: string; fields?: Record<strin
   } catch {
     return base;
   }
-  if (!Number.isSafeInteger(appId) || appId <= 0) return base;
+  const appsFields = appsFieldsFrom(text, appId);
+  const withApps = Object.keys(appsFields).length > 0 ? { appsFields } : {};
+  if (!Number.isSafeInteger(appId) || appId <= 0) return { ...base, ...withApps };
   const found = findFieldsFile(appId);
-  return found ? { ...base, fields: found.file.properties, appId, fieldsPath: found.path } : base;
+  return found
+    ? { ...base, ...withApps, fields: found.file.properties, appId, fieldsPath: found.path }
+    : { ...base, ...withApps };
 }
 
 /**
@@ -78,20 +94,8 @@ function checkOptions(text: string): { pluginZip?: string; fields?: Record<strin
  */
 function explainOptions(text: string): { pluginZip?: string; fields?: Record<string, Record<string, unknown>> } {
   const base = zipOptions();
-  const fields: Record<string, Record<string, unknown>> = {};
-  try {
-    const parsed: unknown = JSON.parse(text);
-    const bindings = parsed && typeof parsed === "object" ? (parsed as { bindings?: unknown }).bindings : undefined;
-    if (!Array.isArray(bindings)) return base;
-    for (const b of bindings) {
-      const appId = Number((b as { appId?: unknown })?.appId ?? 0);
-      if (!Number.isSafeInteger(appId) || appId <= 0) continue;
-      const found = findFieldsFile(appId);
-      if (found) fields[String(appId)] = found.file.properties as unknown as Record<string, unknown>;
-    }
-  } catch {
-    return base;
-  }
+  // 検査・保存と同じ口で集める（3 か所で形がずれないように。`appsFieldsFrom` の注記）
+  const fields = appsFieldsFrom(text);
   return Object.keys(fields).length > 0 ? { ...base, fields } : base;
 }
 

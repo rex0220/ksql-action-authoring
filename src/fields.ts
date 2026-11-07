@@ -59,6 +59,33 @@ export interface FieldSummary {
   options?: string[];
 }
 
+/**
+ * 設定ファイルの本文から、**SQL が触るアプリの項目定義**を集める（`アプリ番号 → properties`）。
+ * 論理アプリ（`bindings`）の分と、渡された自アプリの分。控えが無いアプリは入らない（通信しない）。
+ *
+ * **`CheckOptions.fields`（自アプリの `properties`。キーは項目コード）とは形が違う。**
+ * 検査・保存・実行計画の 3 か所が同じ形を作るように、ここに 1 つだけ置く
+ * （2026-11-07 の試用 S4 の再実施。検査が自アプリの `properties` を
+ * `createFieldsClient` に渡していて、選択肢の検査が黙って何もしていなかった）。
+ */
+export function appsFieldsFrom(text: string, alsoAppId = 0): Record<string, Record<string, unknown>> {
+  const out: Record<string, Record<string, unknown>> = {};
+  const add = (id: number): void => {
+    if (!Number.isSafeInteger(id) || id <= 0 || out[String(id)]) return;
+    const hit = findFieldsFile(id);
+    if (hit) out[String(id)] = hit.file.properties as unknown as Record<string, unknown>;
+  };
+  try {
+    const parsed: unknown = JSON.parse(text);
+    const bindings = parsed && typeof parsed === "object" ? (parsed as { bindings?: unknown }).bindings : undefined;
+    if (Array.isArray(bindings)) for (const b of bindings) add(Number((b as { appId?: unknown })?.appId ?? 0));
+  } catch {
+    // 封筒が読めなければ自アプリの分だけ
+  }
+  add(alsoAppId);
+  return out;
+}
+
 /** 一覧で集めるアプリの上限（大きなドメインで延々と読まない。超えたら「続きがある」と伝える） */
 const MAX_APPS = 500;
 

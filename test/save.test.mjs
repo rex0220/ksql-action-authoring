@@ -372,3 +372,51 @@ test("deleteAction: digest が違えば conflict、無いコードは invalid、
   // どの失敗でもファイルは変わっていない
   assert.equal(JSON.parse(readFileSync(join(ws, "settings/kact-del.json"), "utf8")).actions.length, 1);
 });
+
+// 2026-11-07 の試用 S4 の再実施: 選択肢の定義に無い値の検査（choice-unknown。API 版 8）が
+// **一度も鳴っていなかった**。保存と検査は自アプリの properties（キーは項目コード）を
+// createFieldsClient に渡していて、getFields(アプリ番号) が throw → catch で黙って飛んでいた。
+// SQL は**ほかのアプリ**の選択肢と比べるのがふつうなので、自アプリ 1 つでは足りない
+test("saveConfig: ほかのアプリの選択肢に無い値で絞ると注意（choice-unknown）", { skip }, async () => {
+  // 控えを 2 つ置く（受注 1001 = 選択肢つき、請求 1002 = 書き先）
+  const cache = (appId, appName, properties) => {
+    mkdirSync(join(ws, "fields/dev"), { recursive: true });
+    writeFileSync(join(ws, `fields/dev/APP${appId}.json`), JSON.stringify({
+      tool: "kact fields", fetchedAt: "2026-11-07T00:00:00.000Z", profile: "dev",
+      host: "example.cybozu.com", appId, appName, revision: "1", preview: false, properties,
+    }));
+  };
+  cache(1001, "受注", {
+    請求対象: { type: "DROP_DOWN", code: "請求対象", label: "請求対象", options: { 対象: { label: "対象", index: "0" }, 対象外: { label: "対象外", index: "1" } } },
+    顧客コード: { type: "SINGLE_LINE_TEXT", code: "顧客コード", label: "顧客コード" },
+    金額: { type: "NUMBER", code: "金額", label: "金額" },
+  });
+  cache(1002, "請求", {
+    請求キー: { type: "SINGLE_LINE_TEXT", code: "請求キー", label: "請求キー", unique: true },
+    金額: { type: "NUMBER", code: "金額", label: "金額" },
+  });
+
+  const cfg = (value) => ({
+    bindings: [{ name: "受注", appId: 1001 }, { name: "請求", appId: 1002 }],
+    panel: { views: [{ viewId: "*", sections: [""], menus: [], open: false }] },
+    actions: [{
+      code: "agg", name: "集計する", type: "app", params: [], inputs: [],
+      sql: "-- @ksql dialect: 1\nCREATE TEMP TABLE #a AS\n"
+        + `SELECT 顧客コード, SUM(金額) AS 金額 FROM LAPP_受注 WHERE 請求対象 = '${value}' GROUP BY 顧客コード;\n`
+        + "UPSERT INTO LAPP_請求 (請求キー, 金額) SELECT 顧客コード AS 請求キー, 金額 FROM #a ON DUPLICATE (請求キー);",
+      confirm: true, writeLimit: 10,
+    }],
+  });
+
+  // 選択肢に無い値 → 注意（保存は止めない）
+  const bad = await save.saveConfig({ file: "settings/kact-choice-bad.json", appId: 1002, appName: "請求", config: cfg("対象外外") }, opt);
+  assert.equal(bad.status, "ok", "注意なので保存は止めない");
+  const w = bad.findings.find((f) => f.code === "choice-unknown");
+  assert.ok(w, JSON.stringify(bad.findings));
+  assert.match(w.message, /請求対象/);
+  assert.match(w.message, /対象 \/ 対象外/, "選択肢を並べて見せる");
+
+  // 選択肢にある値 → 出さない
+  const ok = await save.saveConfig({ file: "settings/kact-choice-ok.json", appId: 1002, appName: "請求", config: cfg("対象") }, opt);
+  assert.equal(ok.findings.filter((f) => f.code === "choice-unknown").length, 0, JSON.stringify(ok.findings));
+});

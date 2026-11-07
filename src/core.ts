@@ -335,6 +335,16 @@ export interface CheckOptions extends LoadEngineOptions {
   fields?: Record<string, unknown>;
   /** 項目定義を渡すときの自アプリの番号（`loadFormulaContext` に渡す。省略時は封筒の appId） */
   appId?: number;
+  /**
+   * **SQL が触るアプリの項目定義**（`アプリ番号 → properties`。`kact_explain` に渡すのと同じ形）。
+   * 選択肢の定義に無い値（`choice-unknown`。API 版 8）を見るための `createFieldsClient` に渡す。
+   *
+   * **`fields` とは形が違う**（あちらは自アプリの `properties` で、キーは項目コード）。
+   * 1 つの口で兼ねると、`createFieldsClient` に項目コードをアプリ番号として渡すことになり
+   * （`getFields` が throw して `catch` に落ちるので）**検査が黙って何もしない**
+   * （2026-11-07 の試用 S4 の再実施で見つけた。API 版 8 の検査が一度も鳴っていなかった）。
+   */
+  appsFields?: Record<string, Record<string, unknown>>;
 }
 
 /**
@@ -399,7 +409,9 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
    * 控えが無いアプリがあると本体側が黙って飛ばすので、渡せるときだけ渡す
    */
   const fieldsClient = (() => {
-    const cache = opt.fields;
+    // **`appsFields`（アプリ番号 → properties）だけを使う。** `fields`（自アプリの properties）を
+    // 渡すと項目コードをアプリ番号として扱うことになり、検査が黙って何もしない
+    const cache = opt.appsFields;
     if (!cache || Object.keys(cache).length === 0) return undefined;
     const make = (engine.api as { createFieldsClient?: (f: Record<string, Record<string, unknown>>) => unknown })
       .createFieldsClient;

@@ -15,7 +15,7 @@ import { acquireLock, cleanupAll, placeNew, tempPathFor, withRetry, FileExistsEr
 import { loadEngine, type Engine, type LoadEngineOptions } from "./engine.ts";
 import { checkConfig, type CheckOptions, type Finding, type ToolStatus } from "./core.ts";
 import { actionDiff } from "./diff.ts";
-import { findFieldsFile } from "./fields.ts";
+import { appsFieldsFrom, findFieldsFile } from "./fields.ts";
 import { listWorkspaceFiles, MAX_CONFIG_BYTES, resolveInWorkspace, resolveNewInWorkspace, workspaceDir, WorkspaceError, type WorkspaceFile } from "./workspace.ts";
 
 /** 封筒のキー（これ以外が設定の本体） */
@@ -172,9 +172,17 @@ function withFields(text: string, opt: CheckOptions): CheckOptions {
   } catch {
     return opt;
   }
-  if (!Number.isSafeInteger(appId) || appId <= 0) return opt;
+  /**
+   * **形の違う 2 つを渡す**（`core.ts` の `CheckOptions`）。`appsFields`（アプリ番号 → properties）が
+   * 無いと、選択肢の定義に無い値の検査（`choice-unknown`。API 版 8）が黙って何もしない
+   */
+  const appsFields = opt.appsFields ?? appsFieldsFrom(text, appId);
+  const withApps = Object.keys(appsFields).length > 0 ? { appsFields } : {};
+  if (!Number.isSafeInteger(appId) || appId <= 0) return { ...opt, ...withApps };
   const found = findFieldsFile(appId);
-  return found ? { ...opt, fields: found.file.properties, appId } : opt;
+  return found
+    ? { ...opt, ...withApps, fields: found.file.properties, appId }
+    : { ...opt, ...withApps };
 }
 
 /** 検査（設定画面の保存と同じ規則）。エラーがあれば書かない */
