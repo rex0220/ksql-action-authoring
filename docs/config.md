@@ -67,6 +67,7 @@
 | 使える式の口 | **`execNgMessage` / `resultMessage` / `inputs[].optionLabelsFormula` の 3 つだけ**。ほかの口に `$m_…` を書くと `message:slot` の error |
 | SQL | `ASSERT` と `EXIT SUCCESS IF` のメッセージだけ。`m_` でない変数をメッセージに書くと error（表示は何も出ないため） |
 | 上限 | 50 件 / 1 つの文は 200 字（4 列とも同じ） |
+| **`m_` は名前としても予約** | パラメーター（`params[].name`）と入力項目（`inputs[].name`）に `m_` 始まりの名前は付けられません（`param:reserved-message` / `input:reserved-message` の error。大文字小文字は区別しません） |
 
 > **【大事】`messages` はツールからは足せません**（`kact_save_config` が `messages-not-writable` で**断ります**）。
 > `kact_save_config` / `kact_update_action` は `messages` を作らないので、
@@ -451,6 +452,8 @@ SQL の `DECLARE` 1 本につき **`params` の行が 1 つ**要ります（予�
 ```jsonc
 "params": [{ "name": "keys", "source": "keys", "formula": "顧客コード" }]
 ```
+
+**`formula` は必ず書きます**（空だと `param:keys-formula` の error。空の式では何も渡りません）。
 
 ```sql
 DECLARE @keys = [];   -- 配列で宣言する（`pKeysNotArray`）
