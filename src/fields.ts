@@ -86,16 +86,32 @@ export function appsFieldsFrom(text: string, alsoAppId = 0): Record<string, Reco
   return out;
 }
 
+/** 控えが覚えているアプリの居場所（`appAreasFrom`／`CheckOptions.appAreas`） */
+export interface AppArea {
+  /** ドメイン。**領域を比べてよいかの鍵**（違うドメインの同じ番号は別のアプリ） */
+  host: string;
+  /** 控えを取った接続（findings の文に出す。判定には使わない） */
+  profile: string;
+  /** ゲストスペースの番号（`null` = 通常領域。`undefined` = 領域を記録する前の古い控え） */
+  guestSpaceId?: number | null;
+}
+
 /**
- * 設定が触るアプリの**領域**（`アプリ番号 → { profile, guestSpaceId }`）を控えから集める。
+ * 設定が触るアプリの**領域**（`アプリ番号 → { host, profile, guestSpaceId }`）を控えから集める。
  * **通信しない**。`guestSpaceId` が `undefined` の行は、領域を記録する前の古い控え。
+ *
+ * **突き合わせの鍵は `host`**（`profile` ではない）。接続のファイルの profile は
+ * **ホストとゲストスペースの組**なので、同じドメインでもゲストスペースのアプリは必ず別の profile になる。
+ * profile で比べると、**設定画面がいちばん止めたい形**（通常領域の画面からゲストスペースのアプリを選ぶ）が
+ * まるごと「比べられない」に落ちた（2026-11-07 に 0.11.2 を実機で通して見つけた。
+ * 4377〈dev・通常領域〉から 1687〈guest・ゲストスペース 15〉を参照しても warning にしかならなかった）。
  */
-export function appAreasFrom(text: string, alsoAppId = 0): Record<string, { profile: string; guestSpaceId?: number | null }> {
-  const out: Record<string, { profile: string; guestSpaceId?: number | null }> = {};
+export function appAreasFrom(text: string, alsoAppId = 0): Record<string, AppArea> {
+  const out: Record<string, AppArea> = {};
   const add = (id: number): void => {
     if (!Number.isSafeInteger(id) || id <= 0 || out[String(id)]) return;
     const hit = findFieldsFile(id);
-    if (hit) out[String(id)] = { profile: hit.file.profile, guestSpaceId: hit.file.guestSpaceId };
+    if (hit) out[String(id)] = { host: hit.file.host, profile: hit.file.profile, guestSpaceId: hit.file.guestSpaceId };
   };
   try {
     const parsed: unknown = JSON.parse(text);

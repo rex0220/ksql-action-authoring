@@ -20,7 +20,7 @@ import { checkConfig,
   explainAction, listActions, statusOf } from "./core.ts";
 import { resolveInWorkspace, workspaceStatus, WorkspaceError } from "./workspace.ts";
 import { deleteAction, digestOf, filesOf, pullConfig, saveConfig, updateAction } from "./save.ts";
-import { appAreasFrom, appsFieldsFrom, connectionReport, fetchFields, findFieldsFile, listApps, listViews, type KintoneOptions } from "./fields.ts";
+import { appAreasFrom, appsFieldsFrom, connectionReport, fetchFields, findFieldsFile, listApps, listViews, type AppArea, type KintoneOptions } from "./fields.ts";
 import { diffConfigs } from "./diff.ts";
 import { tryFormulas } from "./try.ts";
 import { toolsMeta } from "./meta.ts";
@@ -71,7 +71,7 @@ function checkOptions(text: string): {
   appId?: number;
   fieldsPath?: string;
   fieldsOthers?: string[];
-  appAreas?: Record<string, { profile: string; guestSpaceId?: number | null }>;
+  appAreas?: Record<string, AppArea>;
 } {
   const base = zipOptions();
   let appId = 0;

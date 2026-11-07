@@ -11,6 +11,7 @@ import { readFileSync } from "node:fs";
 import { loadEngine, type Engine, type LoadEngineOptions } from "./engine.ts";
 import { PluginZipError } from "./plugin-zip.ts";
 import { toolsMeta } from "./meta.ts";
+import type { AppArea } from "./fields.ts";
 
 /** 返りの状態（印刷屋の MCP と同じ語。conflict と denied は段階 2 の保存で使う） */
 export type ToolStatus = "ok" | "invalid" | "incompatible" | "conflict" | "denied" | "failed";
@@ -421,7 +422,7 @@ export interface CheckOptions extends LoadEngineOptions {
    */
   appsFields?: Record<string, Record<string, unknown>>;
   /**
-   * 設定が触るアプリの**領域**（`アプリ番号 → { profile, guestSpaceId }`。`kact_fields` の控えから）。
+   * 設定が触るアプリの**領域**（`アプリ番号 → { host, profile, guestSpaceId }`。`kact_fields` の控えから）。
    *
    * 業務アプリは**自アプリと同じ領域**（通常領域どうし・同じゲストスペースどうし）だけ使える。
    * 設定画面は保存の前に `checkBindingArea`（`ksql-action/src/config/screen.ts`）で止めるが、
@@ -429,7 +430,7 @@ export interface CheckOptions extends LoadEngineOptions {
    * （2026-11-07 の Codex レビュー #7）。控えに `guestSpaceId` を記録してあるので**通信せずに**突き合わせる。
    * 古い控えには入っていないので、そのときは「確かめられなかった」と知らせる（黙って通さない）
    */
-  appAreas?: Record<string, { profile: string; guestSpaceId?: number | null }>;
+  appAreas?: Record<string, AppArea>;
 }
 
 /**
@@ -1018,10 +1019,15 @@ export function bindingAreaFindings(
       continue;
     }
     if (!self || self.guestSpaceId === undefined) continue;
-    // **接続先が違う控えどうしは比べない**（別のドメインの同じ番号は別のアプリ。
-    // ゲストスペースの番号を突き合わせても意味が無い）
-    if (got.profile !== self.profile) {
-      unknown.push(`${b.name}（${id}。控えの接続先が自アプリと違う: ${got.profile} / ${self.profile}）`);
+    /**
+     * **比べる鍵は `host`**（`profile` ではない）。違うドメインの同じ番号は別のアプリなので
+     * ゲストスペースの番号を突き合わせても意味が無いが、**同じドメインなら profile が違っても比べる**。
+     * profile は「ホスト ＋ ゲストスペース」の組なので、ゲストスペースのアプリは必ず別の profile になる。
+     * profile で弾いていたとき、**設定画面がいちばん止めたい形**（通常領域の画面からゲストスペースの
+     * アプリを選ぶ）がまるごと「比べられない」に落ちていた（2026-11-07 に 0.11.2 を実機で通して見つけた）
+     */
+    if (got.host !== self.host) {
+      unknown.push(`${b.name}（${id}。控えのドメインが自アプリと違う: ${got.profile} / ${self.profile}）`);
       continue;
     }
     if ((got.guestSpaceId ?? null) !== (self.guestSpaceId ?? null)) {

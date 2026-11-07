@@ -594,8 +594,8 @@ test("checkConfig: 論理アプリの領域が自アプリと違えばエラー"
 
   // 自アプリは通常領域、集計はゲストスペース 7 → エラー（設定画面の保存でも止まる）
   const cross = await core.checkConfig(...build({
-    1001: { profile: "dev", guestSpaceId: null },
-    1002: { profile: "dev", guestSpaceId: 7 },
+    1001: { host: "example.cybozu.com", profile: "dev", guestSpaceId: null },
+    1002: { host: "example.cybozu.com", profile: "dev", guestSpaceId: 7 },
   }));
   const e = cross.findings.find((f) => f.code === "binding-area");
   assert.ok(e, JSON.stringify(cross.findings));
@@ -606,8 +606,8 @@ test("checkConfig: 論理アプリの領域が自アプリと違えばエラー"
   // 同じ領域どうしなら出さない（通常領域どうし・同じゲストスペースどうし）
   for (const area of [null, 7]) {
     const same = await core.checkConfig(...build({
-      1001: { profile: "dev", guestSpaceId: area },
-      1002: { profile: "dev", guestSpaceId: area },
+      1001: { host: "example.cybozu.com", profile: "dev", guestSpaceId: area },
+      1002: { host: "example.cybozu.com", profile: "dev", guestSpaceId: area },
     }));
     assert.equal(same.findings.filter((f) => f.code === "binding-area").length, 0, JSON.stringify(same.findings));
     assert.equal(same.findings.filter((f) => f.code === "binding-area-unknown").length, 0, JSON.stringify(same.findings));
@@ -615,18 +615,33 @@ test("checkConfig: 論理アプリの領域が自アプリと違えばエラー"
 
   // 領域を記録する前の古い控え（`guestSpaceId` が無い）→ 黙って飛ばさず、確かめていないと知らせる
   const old = await core.checkConfig(...build({
-    1001: { profile: "dev" },
-    1002: { profile: "dev" },
+    1001: { host: "example.cybozu.com", profile: "dev" },
+    1002: { host: "example.cybozu.com", profile: "dev" },
   }));
   const u = old.findings.find((f) => f.code === "binding-area-unknown");
   assert.ok(u, JSON.stringify(old.findings));
   assert.equal(u.level, "warning", "警告止まり（控えが古いだけで編集不能にしない）");
   assert.match(u.message, /kact_fields/);
 
-  // **接続先が違う控えどうしは比べない**（別のドメインの同じ番号は別のアプリ）
+  /**
+   * **同じドメインなら profile が違っても比べる**（2026-11-07 に 0.11.2 を実機で通して見つけた）。
+   * 接続のファイルの profile は「ホスト ＋ ゲストスペース」の組なので、**ゲストスペースのアプリは
+   * 必ず別の profile になる**。profile で弾いていたとき、設定画面がいちばん止めたい形
+   * （通常領域の画面からゲストスペースのアプリを選ぶ）がまるごと「比べられない」に落ちていた。
+   */
+  const realCase = await core.checkConfig(...build({
+    1001: { host: "example.cybozu.com", profile: "dev", guestSpaceId: null },
+    1002: { host: "example.cybozu.com", profile: "guest", guestSpaceId: 15 },
+  }));
+  const r = realCase.findings.find((f) => f.code === "binding-area");
+  assert.ok(r, `profile が違っても同じドメインなら比べる: ${JSON.stringify(realCase.findings)}`);
+  assert.equal(realCase.status, "invalid");
+  assert.match(r.message, /ゲストスペース 15/);
+
+  // **ドメインが違う控えどうしは比べない**（別のドメインの同じ番号は別のアプリ）
   const other = await core.checkConfig(...build({
-    1001: { profile: "dev", guestSpaceId: null },
-    1002: { profile: "prod", guestSpaceId: 7 },
+    1001: { host: "example.cybozu.com", profile: "dev", guestSpaceId: null },
+    1002: { host: "other.cybozu.com", profile: "prod", guestSpaceId: 7 },
   }));
   assert.equal(other.findings.filter((f) => f.code === "binding-area").length, 0, JSON.stringify(other.findings));
   assert.ok(other.findings.some((f) => f.code === "binding-area-unknown"), JSON.stringify(other.findings));
@@ -678,13 +693,13 @@ test("checkConfig: ログアプリは確かめていないと言う（自アプ�
   assert.equal(self.status, "invalid");
 
   // 控えが領域を知っていれば、guestSpaceId の食い違いを言う（手で書いた設定だけがずれる）
-  const areas = { 2002: { profile: "dev", guestSpaceId: 7 } };
+  const areas = { 2002: { host: "example.cybozu.com", profile: "dev", guestSpaceId: 7 } };
   const bad = await core.checkConfig(...build(log, areas));
   assert.ok(bad.findings.some((f) => f.code === "log-app-area"), JSON.stringify(bad.findings));
   const good = await core.checkConfig(...build({ ...log, guestSpaceId: 7 }, areas));
   assert.equal(good.findings.filter((f) => f.code === "log-app-area").length, 0, JSON.stringify(good.findings));
   // 控えが古くて領域を知らなければ言わない（知らないことを間違いとして出さない）
-  const old = await core.checkConfig(...build(log, { 2002: { profile: "dev" } }));
+  const old = await core.checkConfig(...build(log, { 2002: { host: "example.cybozu.com", profile: "dev" } }));
   assert.equal(old.findings.filter((f) => f.code === "log-app-area").length, 0, JSON.stringify(old.findings));
 });
 
