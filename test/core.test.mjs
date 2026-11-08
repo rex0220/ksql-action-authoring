@@ -704,6 +704,54 @@ test("checkConfig: ログアプリは確かめていないと言う（自アプ�
 });
 
 /**
+ * 検査ごとの状態（`summary.checks`）。2026-11-08 の ChatGPT の改善案 1。
+ * **何も言わないのは「大丈夫」ではない**ので、見ていないものは `not_checked` と理由で返す。
+ * findings は今までどおり（足しただけ）。
+ */
+test("checkConfig: 検査ごとに 合格・注意・不合格・未検査 を返す", { skip }, async () => {
+  const base = {
+    configVersion: 1, bindings: [{ name: "受注", appId: 1001 }],
+    limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+    timezone: "", appId: 1001,
+    actions: [{
+      enabled: true, code: "upd", name: "更新", description: "", type: "record", placements: ["detail_menu"],
+      showCond: "", execCond: "", execNgMessage: "", params: [], inputs: [],
+      sql: "-- @ksql dialect: 1\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE $id = 1;",
+      staticInsertRows: 0, confirm: true, writeLimit: 10, allowed: [], allowAll: true, resultMessage: "",
+      listOnError: "continue", groupFormula: "", perRecordLock: false, prevRecord: false,
+    }],
+  };
+  const byName = (r) => Object.fromEntries((r.summary.checks ?? []).map((c) => [c.name, c]));
+
+  // 控えが何も無い → 項目コード・選択肢・領域・実在は「見ていない」と理由つきで返す
+  const bare = await core.checkConfig(envelope(base), { pluginZip: ZIP });
+  assert.equal(bare.status, "ok", JSON.stringify(bare.findings));
+  const b = byName(bare);
+  for (const n of ["schema", "rules", "sql", "formula_syntax"]) assert.equal(b[n]?.status, "passed", `${n}: ${JSON.stringify(b[n])}`);
+  for (const n of ["formula_fields", "choice", "binding_area", "binding_exists"]) {
+    assert.equal(b[n]?.status, "not_checked", `${n}: ${JSON.stringify(b[n])}`);
+    assert.ok(b[n].reason, `${n} に理由が無い`);
+  }
+  assert.equal(b.log_app, undefined, "ログアプリを使っていなければ出さない");
+  assert.match(bare.summary.nextStep, /確かめていないもの/);
+
+  // ログアプリを使う → 設定画面にしかできない検査なので、いつも「見ていない」
+  const withLog = await core.checkConfig(envelope({ ...base, logApp: { appId: 2002, guestSpaceId: 0, profile: "", viewId: 0, panelLog: false, panelLogOpen: false, panelLogCount: 20, panelLogRefreshMin: 0 } }), { pluginZip: ZIP });
+  const l = byName(withLog).log_app;
+  assert.equal(l?.status, "not_checked", JSON.stringify(l));
+  assert.match(l.reason, /設定画面/);
+
+  // 保存できない問題 → その検査が failed、次にすることも「直す」
+  const bad = await core.checkConfig(envelope({ ...base, actions: [{ ...base.actions[0], name: "" }] }), { pluginZip: ZIP });
+  assert.equal(bad.status, "invalid");
+  assert.equal(byName(bad).rules?.status, "failed", JSON.stringify(byName(bad).rules));
+  assert.match(bad.summary.nextStep, /保存できない/);
+
+  // findings は今までどおり返る（足しただけ）
+  assert.ok(Array.isArray(bad.findings) && bad.findings.length > 0);
+});
+
+/**
  * 版 9（2026-11-07）: 検査の文が**設定画面と同じ文**になる。
  * それまでは `detail` と `kind` を素で並べるしかなく、`pInputTypeMismatch` が
  * **`"min / text"`** という読めない findings になっていた（試用 S4 の指摘）。

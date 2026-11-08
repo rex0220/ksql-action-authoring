@@ -17,10 +17,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { readFileSync } from "node:fs";
 import { checkConfig,
-  explainAction, listActions, statusOf } from "./core.ts";
+  explainAction, listActions, statusOf, type CheckOptions } from "./core.ts";
 import { resolveInWorkspace, workspaceStatus, WorkspaceError } from "./workspace.ts";
 import { deleteAction, digestOf, filesOf, pullConfig, saveConfig, updateAction, updateCommon } from "./save.ts";
-import { appAreasFrom, appsFieldsFrom, connectionReport, fetchFields, findFieldsFile, listApps, listViews, type AppArea, type KintoneOptions } from "./fields.ts";
+import { appAreasFrom, appsFieldsFrom, connectionReport, fetchFields, fetchPluginConfig, findFieldsFile, listApps, listViews, storedDigestOf, type AppArea, type KintoneOptions } from "./fields.ts";
 import { diffConfigs } from "./diff.ts";
 import { tryFormulas, TRY_SLOTS } from "./try.ts";
 import { toolsMeta } from "./meta.ts";
@@ -214,16 +214,49 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
     {
       title: "kact: 設定の検査",
       description:
-        "設定ファイル（設定画面にアップロードする封筒形式の JSON）を、**プラグイン本体と同じ規則**で検査する。" +
-        "エラー（保存できない）と注意（保存はできる）を findings で返す。",
-      inputSchema: { file: z.string().describe("作業フォルダーからの相対パス（例: settings/kact-4377.json）") },
-      annotations: { readOnlyHint: true, openWorldHint: false },
+        "設定ファイル（設定画面にアップロードする封筒形式の JSON）を検査する。**読み取りだけで分かる範囲**はプラグイン本体と同じ規則で見る" +
+        "（ログアプリへの試し書きなど、**設定画面の［保存する］にしかできない検査**は見られない）。" +
+        "エラー（保存できない）と注意（保存はできる）を findings で返す。" +
+        "**summary.checks に検査ごとの状態（passed / warning / failed / not_checked と理由）、summary.nextStep に次にすることが入る。" +
+        "not_checked があれば、その分は確かめていないので、利用者にそう伝える**（findings が空でも「全部確かめた」ではない）。" +
+        "**取り込む直前は checkSource: true**（kact_pull の app で読んだファイルなら、kintone から読み直して、" +
+        "読んだ後に設定画面で直されていないかを比べる。直されていたら、取り込むとその直しが消える）。",
+      inputSchema: {
+        file: z.string().describe("作業フォルダーからの相対パス（例: settings/kact-4377.json）"),
+        checkSource: z
+          .boolean()
+          .optional()
+          .describe("kintone から今の設定を読み直して、このファイルを読んだ後に設定画面で直されていないかを比べる（APIラボ。kact_pull の app で読んだファイルだけ）"),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async ({ file }) => {
+    async ({ file, checkSource }) => {
       const r = readWorkspaceFile(file);
       if (!r.ok) return r.result;
       const opt = checkOptions(r.text);
-      return json({ ...(await checkConfig(r.text, opt)), ...(opt.fieldsPath ? { fieldsFrom: opt.fieldsPath } : {}) });
+      /**
+       * 出どころの読み直し（頼まれたときだけ通信する。`checkConfig` 自身は通信しない）。
+       * 接続はファイルに記録した profile と環境で読む（読んだときと同じ所と比べる）
+       */
+      let sourceNow: CheckOptions["sourceNow"];
+      if (checkSource === true) {
+        try {
+          const raw = JSON.parse(r.text) as { source?: { from?: string; appId?: number; profile?: string; environment?: string } };
+          const src = raw.source;
+          if (src && src.from === "kintone" && Number.isSafeInteger(src.appId) && (src.appId ?? 0) > 0) {
+            const got = await fetchPluginConfig(
+              { app: src.appId as number, ...(src.profile ? { profile: src.profile } : {}), preview: src.environment !== "production" },
+              kintoneOptions(),
+            );
+            sourceNow = got.status === "ok" && got.stored
+              ? { status: "ok", storedDigest: storedDigestOf(got.stored), ...(got.revision ? { revision: got.revision } : {}) }
+              : { status: "error", message: got.findings.map((f) => f.message).join(" / ") || got.status };
+          }
+        } catch (e) {
+          sourceNow = { status: "error", message: e instanceof Error ? e.message : String(e) };
+        }
+      }
+      return json({ ...(await checkConfig(r.text, { ...opt, ...(sourceNow ? { sourceNow } : {}) })), ...(opt.fieldsPath ? { fieldsFrom: opt.fieldsPath } : {}) });
     },
   );
 
@@ -437,10 +470,12 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
         expectedDigest: z.string().min(16).max(128).describe("kact_actions か kact_files が返した digest"),
         action: z.record(z.unknown()).describe("アクション（code は必須。**同じコードの行があれば、渡したキーだけを重ねる**ので変えるキーだけでよい。コードが無ければ末尾に足し、そのとき足りないキーは既定値で埋まる）"),
         replaceCode: z.string().min(1).max(64).optional().describe("差し替える相手のコード（コードを変えるときだけ。省略すると action.code と同じ行）"),
+        app: z.number().int().positive().optional().describe("直すつもりのアプリの番号（利用者が言ったもの）。渡すと、ファイルのアプリと違えば書かない（app-mismatch）。**渡すことを勧める**"),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async ({ file, expectedDigest, action, replaceCode }) => json(await updateAction({ file, expectedDigest, action, replaceCode }, zipOptions())),
+    async ({ file, expectedDigest, action, replaceCode, app }) =>
+      json(await updateAction({ file, expectedDigest, action, replaceCode, ...(app !== undefined ? { app } : {}) }, zipOptions())),
   );
 
   server.registerTool(
@@ -464,10 +499,12 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
             "直す共通設定（bindings / timezone / limits / logApp / panel のうち、**変えるキーだけ**）。" +
               "ほかのキー（actions・messages など）を入れると invalid。入れ子は丸ごと置き換えなので、panel は kact_actions の common.panel を元に全体を渡す",
           ),
+        app: z.number().int().positive().optional().describe("直すつもりのアプリの番号（利用者が言ったもの）。渡すと、ファイルのアプリと違えば書かない（app-mismatch）。**渡すことを勧める**"),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async ({ file, expectedDigest, common }) => json(await updateCommon({ file, expectedDigest, common }, zipOptions())),
+    async ({ file, expectedDigest, common, app }) =>
+      json(await updateCommon({ file, expectedDigest, common, ...(app !== undefined ? { app } : {}) }, zipOptions())),
   );
 
   server.registerTool(
@@ -482,10 +519,12 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
         file: z.string().min(1).max(200).describe("作業フォルダーからの相対パス"),
         expectedDigest: z.string().min(16).max(128).describe("kact_actions か kact_files が返した digest"),
         code: z.string().min(1).max(64).describe("消すアクションのコード"),
+        app: z.number().int().positive().optional().describe("直すつもりのアプリの番号（利用者が言ったもの）。渡すと、ファイルのアプリと違えば書かない（app-mismatch）。**渡すことを勧める**"),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async ({ file, expectedDigest, code }) => json(await deleteAction({ file, expectedDigest, code }, zipOptions())),
+    async ({ file, expectedDigest, code, app }) =>
+      json(await deleteAction({ file, expectedDigest, code, ...(app !== undefined ? { app } : {}) }, zipOptions())),
   );
 
   server.registerTool(
@@ -508,7 +547,7 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
         production: z.boolean().optional().describe("app のとき、運用環境の設定を読む（既定は動作テスト環境 ＝ 設定画面が編集しているほう）"),
         to: z.string().min(1).max(200).optional().describe("写す先（省略すると settings/APP<アプリ ID>.json）"),
       },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     async ({ from, app, profile, production, to }) =>
       json(await pullConfig({

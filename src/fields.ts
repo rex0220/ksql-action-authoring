@@ -10,6 +10,7 @@
  */
 import { readdirSync, renameSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import type { ConnectionReport, Finding, ToolStatus } from "./core.ts";
 import {
   authFor,
@@ -126,6 +127,18 @@ export function appAreasFrom(text: string, alsoAppId = 0): Record<string, AppAre
   }
   add(alsoAppId);
   return out;
+}
+
+/**
+ * 保存された設定（`setConfig` が入れたままのキーと値）の digest。
+ * **取得した後に設定画面で直されたか**を比べる鍵（`source.storedDigest`）。
+ * キーの並びに左右されないよう、キーで並べてから JSON にする。
+ * **`revision` は比べない**: あれは「アプリの設定」全体の版で、項目を 1 つ直しただけでも変わる
+ */
+export function storedDigestOf(stored: Record<string, string>): string {
+  const sorted: Record<string, string> = {};
+  for (const k of Object.keys(stored).sort()) sorted[k] = String(stored[k]);
+  return createHash("sha256").update(JSON.stringify(sorted)).digest("hex");
 }
 
 /** 一覧で集めるアプリの上限（大きなドメインで延々と読まない。超えたら「続きがある」と伝える） */
@@ -684,7 +697,7 @@ export async function listApps(input: { profile?: string; limit?: number; name?:
 export async function fetchPluginConfig(
   input: { app: number; profile?: string; preview?: boolean },
   opt: KintoneOptions = {},
-): Promise<{ status: ToolStatus; profile?: string; host?: string; appName?: string; stored?: Record<string, string>; revision?: string; findings: Finding[] }> {
+): Promise<{ status: ToolStatus; profile?: string; host?: string; guestSpaceId?: number | null; preview?: boolean; appName?: string; stored?: Record<string, string>; revision?: string; findings: Finding[] }> {
   if (!Number.isSafeInteger(input.app) || input.app <= 0) return fail("input", "app はアプリの番号（正の整数）で渡す", "invalid");
   let conn: { set: ConnectionSet; def: ProfileDef };
   try {
@@ -716,7 +729,7 @@ export async function fetchPluginConfig(
         }],
       };
     }
-    return { status: "ok", profile: def.profile, host: def.host, appName: String(app.name ?? ""), stored, revision: String(r.revision ?? ""), findings: [] };
+    return { status: "ok", profile: def.profile, host: def.host, guestSpaceId: def.guestSpaceId ?? null, preview: input.preview !== false, appName: String(app.name ?? ""), stored, revision: String(r.revision ?? ""), findings: [] };
   } catch (e) {
     const r = fromConnectionError(e);
     return {

@@ -15,7 +15,7 @@ import { acquireLock, cleanupAll, placeNew, tempPathFor, withRetry, FileExistsEr
 import { loadEngine, type Engine, type LoadEngineOptions } from "./engine.ts";
 import { checkConfig, type CheckOptions, type Finding, type ToolStatus } from "./core.ts";
 import { actionDiff } from "./diff.ts";
-import { appAreasFrom, appsFieldsFrom, fetchPluginConfig, findFieldsFile, type KintoneOptions } from "./fields.ts";
+import { appAreasFrom, appsFieldsFrom, fetchPluginConfig, findFieldsFile, storedDigestOf, type KintoneOptions } from "./fields.ts";
 import { listWorkspaceFiles, MAX_CONFIG_BYTES, resolveInWorkspace, resolveNewInWorkspace, workspaceDir, WorkspaceError, type WorkspaceFile } from "./workspace.ts";
 
 /** 封筒のキー（これ以外が設定の本体） */
@@ -292,6 +292,12 @@ export async function saveConfig(input: SaveConfigInput, opt: LoadEngineOptions 
 
 export interface UpdateActionInput {
   file: string;
+  /**
+   * **直すつもりのアプリ**（任意。2026-11-08）。渡すと、ファイルの封筒の `appId` と比べ、
+   * **違えば書かない**（`app-mismatch`）。試用 S17 で、作業フォルダーのいちばん新しいファイルを
+   * 対象だと決めてしまい、それが別のアプリの設定だった。利用者が言ったアプリを渡す
+   */
+  app?: number;
   /** 読んだ時点の digest（`kact_actions` が返す）。違えば conflict */
   expectedDigest: string;
   /** 差し替える・足すアクション（足りないキーは既定値で埋める） */
@@ -327,6 +333,14 @@ export async function updateAction(input: UpdateActionInput, opt: LoadEngineOpti
     envelope = parsed;
   } catch (e) {
     return fail("parse-failed", e instanceof Error ? e.message : String(e), "invalid");
+  }
+  if (input.app !== undefined && Number(envelope.appId ?? 0) !== input.app) {
+    return fail(
+      "app-mismatch",
+      `このファイルはアプリ ${String(envelope.appId ?? "?")}${envelope.appName ? `「${String(envelope.appName)}」` : ""} の設定です（渡されたのはアプリ ${input.app}）。`
+      + "**書いていません。** 対象のファイルが違います。kact_files で候補を見せて、どのファイルかを利用者に確かめてください",
+      "invalid",
+    );
   }
 
   const body = bodyOf(envelope);
@@ -368,6 +382,12 @@ export type CommonKey = (typeof COMMON_KEYS)[number];
 
 export interface UpdateCommonInput {
   file: string;
+  /**
+   * **直すつもりのアプリ**（任意。2026-11-08）。渡すと、ファイルの封筒の `appId` と比べ、
+   * **違えば書かない**（`app-mismatch`）。試用 S17 で、作業フォルダーのいちばん新しいファイルを
+   * 対象だと決めてしまい、それが別のアプリの設定だった。利用者が言ったアプリを渡す
+   */
+  app?: number;
   /** 読んだ時点の digest（`kact_actions` が返す）。違えば conflict */
   expectedDigest: string;
   /** 直す共通設定（**渡したキーだけ**を差し替える。入れ子は丸ごと置き換え） */
@@ -425,6 +445,14 @@ export async function updateCommon(input: UpdateCommonInput, opt: LoadEngineOpti
   } catch (e) {
     return fail("parse-failed", e instanceof Error ? e.message : String(e), "invalid");
   }
+  if (input.app !== undefined && Number(envelope.appId ?? 0) !== input.app) {
+    return fail(
+      "app-mismatch",
+      `このファイルはアプリ ${String(envelope.appId ?? "?")}${envelope.appName ? `「${String(envelope.appName)}」` : ""} の設定です（渡されたのはアプリ ${input.app}）。`
+      + "**書いていません。** 対象のファイルが違います。kact_files で候補を見せて、どのファイルかを利用者に確かめてください",
+      "invalid",
+    );
+  }
 
   const body = bodyOf(envelope);
   const before = Object.fromEntries(keys.map((k) => [k, body[k]]));
@@ -458,6 +486,12 @@ export async function updateCommon(input: UpdateCommonInput, opt: LoadEngineOpti
 
 export interface DeleteActionInput {
   file: string;
+  /**
+   * **直すつもりのアプリ**（任意。2026-11-08）。渡すと、ファイルの封筒の `appId` と比べ、
+   * **違えば書かない**（`app-mismatch`）。試用 S17 で、作業フォルダーのいちばん新しいファイルを
+   * 対象だと決めてしまい、それが別のアプリの設定だった。利用者が言ったアプリを渡す
+   */
+  app?: number;
   /** 読んだ時点の digest（`kact_actions` が返す）。違えば conflict */
   expectedDigest: string;
   /** 消すアクションのコード（大文字小文字は無視） */
@@ -495,6 +529,14 @@ export async function deleteAction(input: DeleteActionInput, opt: LoadEngineOpti
     envelope = parsed;
   } catch (e) {
     return fail("parse-failed", e instanceof Error ? e.message : String(e), "invalid");
+  }
+  if (input.app !== undefined && Number(envelope.appId ?? 0) !== input.app) {
+    return fail(
+      "app-mismatch",
+      `このファイルはアプリ ${String(envelope.appId ?? "?")}${envelope.appName ? `「${String(envelope.appName)}」` : ""} の設定です（渡されたのはアプリ ${input.app}）。`
+      + "**書いていません。** 対象のファイルが違います。kact_files で候補を見せて、どのファイルかを利用者に確かめてください",
+      "invalid",
+    );
   }
 
   const body = bodyOf(envelope);
@@ -535,6 +577,31 @@ function formatDate(d: Date): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+/**
+ * 設定ファイルの**出どころ**（封筒の `source`）。`kact_pull` が書き、`kact_actions` が見せ、
+ * `kact_check` の `checkSource` が比べる。**取り込みでは捨てられる**（知らないキーは strip）
+ */
+export interface PullSource {
+  /** `kintone` = アプリから直に読んだ（APIラボ）／ `file` = ダウンロードしたファイルから */
+  from: "kintone" | "file";
+  appId: number;
+  appName: string;
+  /** kintone から読んだときの接続（名前と host だけ。秘密の値は入れない） */
+  profile?: string;
+  host?: string;
+  guestSpaceId?: number | null;
+  /** 読んだ環境（`preview` = 動作テスト環境 ＝ 設定画面が編集しているほう） */
+  environment?: "preview" | "production";
+  /** kintone が返した「アプリの設定」の版（**比べる鍵にはしない**。項目を直しただけでも変わる） */
+  revision?: string;
+  /** 保存されていた設定（キーと値）の digest。**取得後に設定画面で直されたか**を比べる鍵 */
+  storedDigest?: string;
+  /** ファイルから取り込んだときの、元のファイル */
+  file?: string;
+  fileDigest?: string;
+  fetchedAt: string;
+}
+
 export interface PullInput {
   /** 設定画面の［設定をダウンロード］で取ったファイル（作業フォルダーからの相対パス。例 inbox/kact-app1001.json） */
   from?: string;
@@ -552,6 +619,7 @@ export interface PullInput {
   to?: string;
   /** 試験で差し替える（kintone に行かずに「保存された設定」を渡す） */
   fetchImpl?: typeof fetch;
+  now?: () => Date;
 }
 
 /**
@@ -599,7 +667,7 @@ export async function pullConfig(input: PullInput, opt: LoadEngineOptions & Kint
     }
     appId = input.app;
     // 封筒は**本体の `buildExportData`**（引数は meta → data の順。設定画面のダウンロードと同じ形）
-    text = JSON.stringify(engine.api.buildExportData(
+    const exported = engine.api.buildExportData(
       {
         pluginName: "kSQL アクション",
         pluginId: String(engine.api.pluginIdName),
@@ -608,7 +676,26 @@ export async function pullConfig(input: PullInput, opt: LoadEngineOptions & Kint
         appName: got.appName ?? "",
       } as never,
       body as never,
-    ));
+    ) as Record<string, unknown>;
+    /**
+     * **出どころ**（2026-11-08。ChatGPT の改善案 2）。取り込んだ後に設定画面で直されたかを、
+     * 取り込む直前に `kact_check`（`checkSource`）で比べるための控え。
+     * **取り込みでは捨てられる**（設定画面の読み込みは、封筒も本体も知らないキーを黙って捨てる
+     * ＝ kit の `unknown: "strip"`）ので、置いても取り込みは壊れない。秘密の値は入れない
+     */
+    const source: PullSource = {
+      from: "kintone",
+      appId,
+      appName: got.appName ?? "",
+      profile: got.profile ?? "",
+      host: got.host ?? "",
+      guestSpaceId: got.guestSpaceId ?? null,
+      environment: got.preview === false ? "production" : "preview",
+      revision: got.revision ?? "",
+      storedDigest: storedDigestOf(got.stored),
+      fetchedAt: (input.now ?? (() => new Date()))().toISOString(),
+    };
+    text = JSON.stringify({ ...exported, source });
     extra.push({
       level: "warning",
       code: "from-api-lab",
@@ -626,6 +713,24 @@ export async function pullConfig(input: PullInput, opt: LoadEngineOptions & Kint
     }
     if (statSync(from).size > MAX_CONFIG_BYTES) return fail("too-large", `ファイルが大きすぎる（生のバイト数で ${MAX_CONFIG_BYTES.toLocaleString()} バイトまで）。これは読み込みの防御で、**kintone の壁ではない**（壁は圧縮後 256 KB）`, "invalid");
     text = readFileSync(from, "utf8");
+    /**
+     * 出どころ（ダウンロードしたファイル）。**kintone の今の設定と比べる元は無い**
+     * （保存された形を持っていないため）。`kact_check` の `checkSource` は「見ていない」と返す
+     */
+    try {
+      const parsedFile = JSON.parse(text) as Record<string, unknown>;
+      const source: PullSource = {
+        from: "file",
+        file: input.from as string,
+        fileDigest: digestOf(text),
+        appId: Number(parsedFile.appId ?? 0),
+        appName: String(parsedFile.appName ?? ""),
+        fetchedAt: (input.now ?? (() => new Date()))().toISOString(),
+      };
+      text = JSON.stringify({ ...parsedFile, source });
+    } catch {
+      // 読めないファイルは下の parseImport が断る
+    }
 
     // kSQL アクションの設定か（封筒の pluginID と形）。ここで落ちるものは写さない
     try {

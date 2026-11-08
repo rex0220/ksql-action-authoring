@@ -122,6 +122,31 @@ function parseConfigFile(engine: Engine, text: string): { config: Record<string,
   return { config, envelope: parsed.envelope };
 }
 
+/**
+ * 検査の 1 項目の結果（2026-11-08。ChatGPT の改善案 1「合格・不合格・未検査に分ける」）。
+ *
+ * **何も言わないのは「大丈夫」ではない**（Qiita ⑫ の 2 節）。findings だけだと、
+ * 「見ていない」が**警告の文の中**にしか出ず（`log-app-unverified`・`binding-area-unknown` …）、
+ * AI は findings が空なら「検査して問題なし」と読む。**項目ごとに状態を返す**。
+ *
+ * - `passed`      見て、問題が無かった
+ * - `warning`     見て、保存は止めないが動きが意図と違いうるもの（例: 選択肢の定義外の値で 0 件になる）
+ * - `failed`      見て、**保存できない**問題があった（findings の error と対）
+ * - `not_checked` **見ていない**（控えが無い・古い zip・**設定画面にしかできない検査**）。`reason` に理由
+ *
+ * findings はこれまでどおり返す（足しただけ。今の使い方は壊さない）
+ */
+export type CheckStatus = "passed" | "warning" | "failed" | "not_checked";
+export interface CheckItem {
+  /** 機械向けの名前（`schema` / `rules` / `size` / `display` / `binding_area` / `binding_exists` / `log_app` / `sql` / `choice` / `formula_syntax` / `formula_fields` / `source`） */
+  name: string;
+  /** 人向けの名前 */
+  label: string;
+  status: CheckStatus;
+  /** `not_checked` の理由、または `warning` / `failed` の要点 */
+  reason?: string;
+}
+
 export interface CheckResult {
   status: ToolStatus;
   /** 設定の要約（値は含まない） */
@@ -134,8 +159,29 @@ export interface CheckResult {
     sqlLines: number[];
     /** 計算式をどこまで見たか（`fields` = 項目コード・関数名まで、`syntax` = 引用符と括弧の対応だけ） */
     formulaCheck?: "fields" | "syntax";
+    /** 検査ごとの状態（`CheckItem`）。**`not_checked` があれば、その分は確かめていない** */
+    checks?: CheckItem[];
+    /**
+     * 次にすること（人と AI に向けた 1 文）。**設定ファイルを作れること**と
+     * **設定画面で保存できること**は別なので、未検査が残るときはそれを言う
+     */
+    nextStep?: string;
   };
   findings: Finding[];
+}
+
+/** その範囲の findings から状態を決める（error → failed、warning → warning、無し → passed） */
+function statusOfFindings(fs: Finding[]): CheckStatus {
+  if (fs.some((f) => f.level === "error")) return "failed";
+  if (fs.some((f) => f.level === "warning")) return "warning";
+  return "passed";
+}
+/** 要点（最初の 1 件の文の頭）。長い文はここでは切る */
+function gistOf(fs: Finding[]): string | undefined {
+  const f = fs.find((x) => x.level === "error") ?? fs.find((x) => x.level === "warning");
+  if (!f) return undefined;
+  const t = f.message.replace(/\*\*/g, "").replace(/\s+/g, " ");
+  return `${fs.length} 件（例: ${t.length > 60 ? `${t.slice(0, 60)}…` : t}）`;
 }
 
 /** 計算式の口（設定画面の `collectFormulaProblems` と同じ。`where` は利用者に出す名前） */
@@ -450,6 +496,12 @@ export interface CheckOptions extends LoadEngineOptions {
    * 古い控えには入っていないので、そのときは「確かめられなかった」と知らせる（黙って通さない）
    */
   appAreas?: Record<string, AppArea>;
+  /**
+   * **今の kintone の設定**（`kact_check` の `checkSource` を頼まれたときだけ、MCP の層が読んで渡す）。
+   * ファイルの `source.storedDigest`（取り込んだときの digest）と比べて、
+   * **取り込んだ後に設定画面で直されていないか**を見る。`checkConfig` 自身は通信しない
+   */
+  sourceNow?: { status: "ok"; storedDigest: string; revision?: string } | { status: "error"; message: string };
 }
 
 /**
@@ -484,12 +536,28 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
     return { status: "invalid", findings: [{ level: "error", code: "parse-failed", message: e instanceof Error ? e.message : String(e) }] };
   }
 
+  /**
+   * 検査ごとの状態（`CheckItem`）。**段階ごとに、その段階が足した findings で決める**
+   * （後から警告の文やコードで推し量ると、コードが増えたときに取りこぼす）
+   */
+  const checks: CheckItem[] = [];
+  const mark = (): number => findings.length;
+  const record = (name: string, label: string, from: number, extra?: { status?: CheckStatus; reason?: string; only?: (f: Finding) => boolean }): void => {
+    const fs = findings.slice(from).filter(extra?.only ?? (() => true));
+    const status = extra?.status ?? statusOfFindings(fs);
+    const reason = extra?.reason ?? (status === "passed" ? undefined : gistOf(fs));
+    checks.push({ name, label, status, ...(reason ? { reason } : {}) });
+  };
+
   // 1 形（スキーマ）
+  let at0 = mark();
   try {
     engine.api.validateSchema(config);
   } catch (e) {
     findings.push({ level: "error", code: "schema", message: e instanceof Error ? e.message : String(e) });
   }
+  record("schema", "設定の形", at0);
+  at0 = mark();
 
   // 2 横断の検査（コードの重複・イベントの整合など）。
   // 本体が返すのは `action[0]:app:placement` のような**規則のコードだけ**で、
@@ -501,6 +569,7 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
       message: `${issue}（設定の規則に反している。形は「どこ:規則」で、action[n] は n 番目のアクション（0 から）。意味は kact_docs の section config）`,
     });
   }
+  record("rules", "アクションの決まり（名前・起動・上限など）", at0);
 
   /**
    * 2a 設定の大きさ（**圧縮後**。API 版 7 の `measureConfigBytes`）。
@@ -513,11 +582,14 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
    * 版 7 より前の zip にはこの口が無いので、そのときは測らない（黙って飛ばす＝古い zip の約束）。
    */
   {
+    const atSize = mark();
+    let measured = false;
     const api = engine.api as { measureConfigBytes?: (d: unknown) => Promise<number>; CONFIG_MAX_BYTES?: number };
     if (typeof api.measureConfigBytes === "function" && typeof api.CONFIG_MAX_BYTES === "number") {
       const max = api.CONFIG_MAX_BYTES;
       try {
         const bytes = await api.measureConfigBytes(config);
+        measured = true;
         if (bytes > max) {
           findings.push({
             level: "error",
@@ -537,6 +609,8 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
         });
       }
     }
+    record("size", "設定の大きさ（圧縮後 256 KB まで）", atSize,
+      measured ? undefined : { status: "not_checked", reason: typeof api.measureConfigBytes === "function" ? "測れなかった（findings の config-size-unknown）" : "この zip には測る口が無い（オーサリング API 版 7 より前）" });
   }
 
   // 3 アクションごとの SQL
@@ -547,6 +621,7 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
   // 一覧は `viewRow.sections.includes(a.panelSection)` で選ぶので、定義に無い区分の
   // アクションは**どの一覧にも出ない**（詳細画面はボタンとして出る）。設定画面の区分欄は
   // 選択式なので起きないが、**ファイルから作るときは素通り**して、静かに消える
+  const atDisplay = mark();
   for (const f of unknownSectionFindings(config, actions)) findings.push(f);
   // 2c 一覧に出るのに `panel.views` のどの行にも載っていない（2026-11-06 の試用 S4）。
   // `wUnknownSection` は「定義に無い区分」だけを見るので、区分なしと
@@ -555,12 +630,47 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
   // 2d 一覧の「1 件ずつ」のままテーブルを全置換している（2026-11-07 の試用 S5）。
   // 既定が "loop" なので、渡し方を書き忘れただけでこの形になる
   for (const f of listApplyLoopFindings(actions)) findings.push(f);
+  record("display", "画面への出し方（区分・一覧・渡し方）", atDisplay);
   // 2e 論理アプリの**領域**（ゲストスペース）が自アプリと同じか（2026-11-07 の Codex レビュー #7）。
   // 設定画面は保存の前に `checkBindingArea` で止めるので、ここで気づけないと取り込みまで失敗が遅れる
+  const atArea = mark();
   for (const f of bindingAreaFindings(bindings, opt, envelope)) findings.push(f);
+  {
+    const fs = findings.slice(atArea);
+    const failed = fs.some((f) => f.code === "binding-area");
+    const unknown = fs.some((f) => f.code === "binding-area-unknown");
+    if (!opt.appAreas || Object.keys(opt.appAreas).length === 0) {
+      record("binding_area", "論理アプリの領域（ゲストスペース）", atArea, { status: "not_checked", reason: "項目定義の控えが無い（kact_fields で取ると確かめられる）" });
+    } else if (failed) {
+      record("binding_area", "論理アプリの領域（ゲストスペース）", atArea, { only: (f) => f.code === "binding-area" });
+    } else if (unknown) {
+      record("binding_area", "論理アプリの領域（ゲストスペース）", atArea, { status: "not_checked", reason: "控えが無い・古いアプリがある（findings の binding-area-unknown。kact_fields で取り直す）" });
+    } else {
+      record("binding_area", "論理アプリの領域（ゲストスペース）", atArea);
+    }
+    // 実在: 控えがあれば、取った時点では実在した。無いアプリは設定画面の保存が確かめる
+    const ids = bindings.map((b) => String(Number(b.appId ?? 0)));
+    const cached = (id: string): boolean => !!(opt.appAreas?.[id] || opt.appsFields?.[id]);
+    const missing = bindings.filter((_, i) => !cached(ids[i] ?? ""));
+    checks.push(missing.length === 0 && bindings.length > 0
+      ? { name: "binding_exists", label: "論理アプリが実在するか", status: "passed", reason: "項目定義の控えを取った時点では実在した" }
+      : { name: "binding_exists", label: "論理アプリが実在するか", status: "not_checked", reason: `控えが無いアプリは確かめていない（${missing.map((b) => `${b.name}=${b.appId}`).join(" / ") || "論理アプリなし"}）。設定画面の［保存する］が確かめる` });
+  }
   // 2f ログアプリ（2026-11-07 の Codex レビュー #8）。設定画面は保存の前に**本物の書き込みで**
   // 診断するので、tools の検査は同じ規則ではない。できる分だけ見て、見ていない分を言う
+  const atLog = mark();
   for (const f of logAppFindings(config, opt, envelope)) findings.push(f);
+  if (config.logApp && typeof config.logApp === "object") {
+    const fs = findings.slice(atLog);
+    if (fs.some((f) => f.code === "log-app-self")) {
+      record("log_app", "ログアプリ", atLog, { only: (f) => f.level === "error" });
+    } else {
+      record("log_app", "ログアプリ", atLog, {
+        status: "not_checked",
+        reason: "項目の型・読み書きの権限・job_key の重複禁止は、設定画面の［保存する］が実際に 1 件書いて確かめる（ツールは読み取りだけ）",
+      });
+    }
+  }
   /**
    * 控えの項目定義から作る client（API 版 3 の `createFieldsClient`）。**通信しない**（手元の
    * `properties` を返すだけ）。これを `checkActionSql` に渡すと、選択肢の定義に無い値
@@ -581,6 +691,8 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
       return undefined;
     }
   })();
+  const atSql = mark();
+  let choiceLooked = !!fieldsClient;
   for (const [i, action] of actions.entries()) {
     if (action.enabled === false) continue;
     /**
@@ -596,6 +708,7 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
       /** API 版 8 から。古い zip では undefined */
       choiceUnknown?: Array<{ field: string; value: string; kind: string; options: string[] }>;
     };
+    if (r.choiceUnknown === undefined) choiceLooked = false; // 版 8 より前の zip は選択肢を見ない
     const at = { actionIndex: i + 1, actionCode: String(action.code ?? "") };
     for (const p of r.problems) {
       findings.push({ level: "error", code: p.code, message: problemMessage(engine, p), ...at });
@@ -615,6 +728,11 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
       });
     }
   }
+
+  record("sql", "SQL", atSql, { only: (f) => f.code !== "choice-unknown" });
+  record("choice", "選択肢の定義に無い値", atSql, choiceLooked
+    ? { only: (f) => f.code === "choice-unknown" }
+    : { status: "not_checked", reason: fieldsClient ? "この zip は選択肢を見ない（オーサリング API 版 8 より前）" : "SQL が触るアプリの項目定義の控えが無い（kact_fields で取ると確かめられる）" });
 
   /**
    * 同じアプリ番号の控えが 2 つ以上あった（接続先が違う・動作テスト環境と運用環境）。
@@ -645,7 +763,63 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
       }
     }
   }
+  const atFormula = mark();
   findings.push(...checkFormulas(engine, actions, contexts));
+  record("formula_syntax", "計算式（引用符・括弧・構文）", atFormula, { only: (f) => f.code !== "pFormulaField" });
+  record("formula_fields", "計算式（項目コード・関数名まで）", atFormula, contexts
+    ? { only: (f) => f.code === "pFormulaField" }
+    : { status: "not_checked", reason: "自アプリの項目定義の控えが無い（kact_fields で取ると、項目コードの打ち間違いまで確かめられる）" });
+
+  /**
+   * 出どころ（2026-11-08。ChatGPT の改善案 2）。**取り込みは全置換**なので、取り込んだ後に
+   * 設定画面で誰かが直していると、**このファイルを取り込んだ時点でその直しが黙って消える**。
+   * 取り込む直前に `checkSource` で読み直して比べる
+   */
+  const source = (() => {
+    try {
+      const raw = JSON.parse(text) as { source?: unknown };
+      return raw.source && typeof raw.source === "object" ? raw.source : undefined;
+    } catch {
+      return undefined;
+    }
+  })() as
+    | { from?: string; appId?: number; storedDigest?: string; fetchedAt?: string; environment?: string }
+    | undefined;
+  let sourceChanged = false;
+  if (source) {
+    const label = "取り込んだ後に設定画面で直されていないか";
+    if (source.from !== "kintone" || !source.storedDigest) {
+      checks.push({ name: "source", label, status: "not_checked", reason: "ダウンロードしたファイルから取り込んだので、比べる元が無い（kact_pull の app で読み直すと確かめられる）" });
+    } else if (!opt.sourceNow) {
+      checks.push({ name: "source", label, status: "not_checked", reason: "取り込む直前に kact_check の checkSource: true で確かめられる（kintone から読み直して比べる）" });
+    } else if (opt.sourceNow.status === "error") {
+      checks.push({ name: "source", label, status: "not_checked", reason: `読み直せなかった: ${opt.sourceNow.message.slice(0, 80)}` });
+    } else if (opt.sourceNow.storedDigest === source.storedDigest) {
+      checks.push({ name: "source", label, status: "passed", reason: `${String(source.fetchedAt ?? "")} に読んだときから変わっていない` });
+    } else {
+      sourceChanged = true;
+      findings.push({
+        level: "warning",
+        code: "source-changed",
+        message:
+          `このファイルを kintone から読んだ後（${String(source.fetchedAt ?? "")}）に、**設定画面で設定が直されています**。`
+          + "**このまま取り込むと、その直しが消えます**（取り込みは全置換）。"
+          + "`kact_pull` の `app` で読み直し、直しをやり直してください",
+      });
+      checks.push({ name: "source", label, status: "warning", reason: "読んだ後に設定画面で直されている。このまま取り込むと、その直しが消える" });
+    }
+  }
+
+  const failed = checks.filter((c) => c.status === "failed");
+  const unchecked = checks.filter((c) => c.status === "not_checked");
+  const nextStep = sourceChanged
+    ? "**取り込まないでください。** 読んだ後に設定画面で直されているので、このまま取り込むとその直しが消えます。kact_pull の app で読み直して、直しをやり直してください"
+    : failed.length > 0
+    ? `保存できない問題があります（${failed.map((c) => c.label).join("・")}）。findings の error を直してから、もう一度 kact_check を流してください`
+    : unchecked.length > 0
+      ? `設定ファイルとしては作れます。ただし**確かめていないもの**があります（${unchecked.map((c) => c.label).join("・")}）。`
+        + "設定画面に取り込んで［保存する］まで通ることを、利用者に確かめてもらってください"
+      : "設定ファイルとして作れます。設定画面に取り込んで［保存する］→ 運用環境に反映 → ボタンで確かめてください";
 
   const enabled = actions.filter((a) => a.enabled !== false).length;
   return {
@@ -658,6 +832,8 @@ export async function checkConfig(text: string, opt: CheckOptions = {}): Promise
       sqlLines: actions.map((a) => String(a.sql ?? "").split("\n").length),
       /** 計算式をどこまで見たか（項目コードまで見たか、構文だけか） */
       formulaCheck: contexts ? "fields" : "syntax",
+      checks,
+      nextStep,
     },
     findings,
   };
@@ -1177,7 +1353,7 @@ export interface CommonSummary {
 export async function listActions(
   text: string,
   opt: LoadEngineOptions = {},
-): Promise<{ status: ToolStatus; actions?: ActionSummary[]; messages?: string[]; common?: CommonSummary; findings: Finding[] }> {
+): Promise<{ status: ToolStatus; app?: { id: number; name: string }; source?: Record<string, unknown>; actions?: ActionSummary[]; messages?: string[]; common?: CommonSummary; findings: Finding[] }> {
   let engine: Engine;
   try {
     engine = await loadEngine(opt);
@@ -1185,11 +1361,26 @@ export async function listActions(
     return { status: "failed", findings: [{ level: "error", code: "engine-load-failed", message: e instanceof Error ? e.message : String(e) }] };
   }
   let config: Record<string, unknown>;
+  let envelope: Record<string, unknown>;
   try {
-    ({ config } = parseConfigFile(engine, text));
+    ({ config, envelope } = parseConfigFile(engine, text));
   } catch (e) {
     return { status: "invalid", findings: [{ level: "error", code: "parse-failed", message: e instanceof Error ? e.message : String(e) }] };
   }
+  /**
+   * **このファイルがどのアプリのものか**と、出どころ（2026-11-08）。
+   * 試用 S17 で、作業フォルダーのいちばん新しいファイルを対象だと決めてしまい、別のアプリの設定だった。
+   * 直す前に**利用者が言ったアプリと合っているか**を見られるように返す
+   * （`parseImport` は封筒の知らないキーを捨てるので、`source` は生の JSON から取る）
+   */
+  const rawSource = (() => {
+    try {
+      const raw = JSON.parse(text) as { source?: unknown };
+      return raw.source && typeof raw.source === "object" ? (raw.source as Record<string, unknown>) : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
   const actions = (Array.isArray(config.actions) ? config.actions : []) as Array<Record<string, unknown>>;
   /**
    * 共通の文の**コードの一覧だけ**（§8.4。文は返さない＝コードが分かれば式が書ける）。
@@ -1204,6 +1395,8 @@ export async function listActions(
   const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
   return {
     status: "ok",
+    app: { id: Number(envelope.appId ?? 0), name: String(envelope.appName ?? "") },
+    ...(rawSource ? { source: rawSource } : {}),
     ...(messages.length > 0 ? { messages } : {}),
     /**
      * 共通設定。**`panel` を返すのが要点**（区分と一覧ごとの出し方は、読めないと直しようがない）。

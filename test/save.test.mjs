@@ -164,8 +164,16 @@ test("pullConfig: ダウンロードした設定を写す（元は残す）", { 
   const r = await save.pullConfig({ from: "inbox/kact-download.json" }, opt);
   assert.equal(r.status, "ok", JSON.stringify(r.findings));
   assert.equal(r.path, "settings/APP1001.json");
-  assert.equal(readFileSync(join(ws, "settings/APP1001.json"), "utf8"), downloaded);
+  // 中身は元と同じで、**出どころ（source）だけが足される**（2026-11-08。取り込みでは捨てられるキー）
+  const pulled = JSON.parse(readFileSync(join(ws, "settings/APP1001.json"), "utf8"));
+  const { source, ...rest } = pulled;
+  assert.deepEqual(rest, JSON.parse(downloaded));
+  assert.equal(source.from, "file");
+  assert.equal(source.file, "inbox/kact-download.json");
+  assert.equal(source.fileDigest, save.digestOf(downloaded));
+  assert.equal(source.appId, 1001);
   assert.equal(existsSync(join(ws, "inbox/kact-download.json")), true, "元のファイルは残す");
+  assert.equal(readFileSync(join(ws, "inbox/kact-download.json"), "utf8"), downloaded, "元のファイルは書き換えない");
   const again = await save.pullConfig({ from: "inbox/kact-download.json" }, opt);
   assert.equal(again.status, "conflict");
 });
@@ -764,5 +772,72 @@ test("pullConfig(app): 設定が空なら plugin-not-added（写さない）", {
   assert.equal(r.status, "invalid");
   assert.equal(r.findings[0].code, "plugin-not-added");
   assert.equal(existsSync(join(ws, "settings/empty.json")), false);
+});
+
+/**
+ * 出どころの記録と、取り込む直前の読み直し（2026-11-08。ChatGPT の改善案 2）。
+ * **取り込みは全置換**なので、読んだ後に設定画面で直されていると、このファイルを取り込んだ時点で
+ * その直しが黙って消える。読んだときの digest を残し、取り込む直前に比べる。
+ */
+test("pullConfig(app): 出どころを記録し、kact_check の読み直しで「直されていないか」を比べる", { skip }, async () => {
+  const stored = await storedOf(storedBody);
+  const fetchImpl = async (url) => {
+    const body = String(url).includes("/app.json") ? { name: "受注" } : { config: stored, revision: "7" };
+    return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const r = await save.pullConfig({ app: 1001, to: "settings/src-check.json", fetchImpl }, { ...withConnection() });
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  const text = readFileSync(join(ws, "settings/src-check.json"), "utf8");
+  const src = JSON.parse(text).source;
+  assert.equal(src.from, "kintone");
+  assert.equal(src.appId, 1001);
+  assert.equal(src.appName, "受注");
+  assert.equal(src.environment, "preview");
+  assert.equal(src.revision, "7");
+  assert.match(src.storedDigest, /^[0-9a-f]{64}$/);
+  assert.equal(JSON.stringify(src).includes("password"), false, "秘密の値を入れない");
+
+  const core = await import(pathToFileURL("dist/core.test-bundle.mjs").href);
+  const byName = (res) => Object.fromEntries(res.summary.checks.map((c) => [c.name, c]));
+  // 読み直しを頼まなければ「見ていない」
+  const plain = await core.checkConfig(text, opt);
+  assert.equal(byName(plain).source.status, "not_checked");
+  // 同じ → 合格
+  const same = await core.checkConfig(text, { ...opt, sourceNow: { status: "ok", storedDigest: src.storedDigest } });
+  assert.equal(byName(same).source.status, "passed");
+  // 読んだ後に設定画面で直された → 注意、findings にも出し、次にすることは「取り込まない」
+  const changed = await core.checkConfig(text, { ...opt, sourceNow: { status: "ok", storedDigest: "0".repeat(64) } });
+  assert.equal(byName(changed).source.status, "warning");
+  assert.ok(changed.findings.some((f) => f.code === "source-changed"), JSON.stringify(changed.findings));
+  assert.match(changed.summary.nextStep, /取り込まないでください/);
+  // 読み直せなかった → 「見ていない」と理由
+  const err = await core.checkConfig(text, { ...opt, sourceNow: { status: "error", message: "APIラボが無効" } });
+  assert.equal(byName(err).source.status, "not_checked");
+  assert.match(byName(err).source.reason, /APIラボが無効/);
+
+  // kact_actions はどのアプリのファイルかと、出どころを返す
+  const listed = await core.listActions(text, opt);
+  assert.deepEqual(listed.app, { id: 1001, name: "受注" });
+  assert.equal(listed.source.from, "kintone");
+});
+
+test("updateAction / updateCommon / deleteAction: app を渡すと、別のアプリのファイルには書かない", { skip }, async () => {
+  const file = "settings/src-check.json";
+  const before = readFileSync(join(ws, file), "utf8");
+  const digest = save.digestOf(before);
+  const a = await save.updateAction({ file, expectedDigest: digest, app: 2002, action: { code: "sum", name: "違うアプリ" } }, opt);
+  assert.equal(a.status, "invalid");
+  assert.equal(a.findings[0].code, "app-mismatch");
+  assert.match(a.findings[0].message, /アプリ 1001/);
+  const c = await save.updateCommon({ file, expectedDigest: digest, app: 2002, common: { timezone: "UTC" } }, opt);
+  assert.equal(c.findings[0].code, "app-mismatch");
+  const d = await save.deleteAction({ file, expectedDigest: digest, app: 2002, code: "sum" }, opt);
+  assert.equal(d.findings[0].code, "app-mismatch");
+  assert.equal(readFileSync(join(ws, file), "utf8"), before, "どれも書いていない");
+  // 合っていれば書ける
+  const ok = await save.updateCommon({ file, expectedDigest: digest, app: 1001, common: { timezone: "UTC" } }, opt);
+  assert.equal(ok.status, "ok", JSON.stringify(ok.findings));
+  // 書いた後も出どころは残る（取り込むまで比べられるように）
+  assert.equal(JSON.parse(readFileSync(join(ws, file), "utf8")).source.from, "kintone");
 });
 

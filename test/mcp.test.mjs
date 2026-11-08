@@ -62,8 +62,9 @@ test("ツールが 17 本出る（読み取り専用の注釈つき）", { skip 
     "kact_views", "kact_workspace_status",
   ]);
   const readOnly = new Set(["kact_docs", "kact_status", "kact_workspace_status", "kact_check", "kact_actions", "kact_files", "kact_diff", "kact_apps", "kact_views", "kact_explain", "kact_try"]);
-  // kintone に通信するのは段階 3 の 3 本だけ（ほかは zip と作業フォルダーだけ）
-  const openWorld = new Set(["kact_fields", "kact_apps", "kact_views"]);
+  // kintone に通信するのは段階 3 の 3 本と、0.13.0 の kact_pull（app で設定を直に読む）、
+  // 0.14.0 の kact_check（checkSource で読み直す。頼まれたときだけ）。ほかは zip と作業フォルダーだけ
+  const openWorld = new Set(["kact_fields", "kact_apps", "kact_views", "kact_pull", "kact_check"]);
   for (const t of tools) {
     assert.equal(t.annotations?.readOnlyHint, readOnly.has(t.name), `${t.name} の readOnlyHint が違う`);
     assert.equal(t.annotations?.openWorldHint, openWorld.has(t.name), `${t.name} の openWorldHint が違う`);
