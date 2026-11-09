@@ -218,7 +218,7 @@ ASSERT (SELECT COUNT(*) FROM LAPP_在庫 WHERE 残数 < 0) = 0, @m_no_stock;
 | `check_delete` | **削除前の検査** | record のみ |
 
 **保存前の検査（`check_*`）の行は、ほかの起動と混ぜません**（`detail_menu`・`event_*`・`onList: true` と同じ行にすると `check:mixed` の error）。
-書く文は置けず（`pCheckWrite`）、入力項目・ループも持てません。`confirm` と `writeLimit` は見ない（書かないので数える件数が無い）ので、
+書く文は置けず（`pCheckWrite`）、入力項目・ループ・**パラメーターの源泉「キーの配列」**（`check:keys`。キーが空だと SQL を流さずに通ってしまうため。前の値は SQL で `$id = @_record` から読む）も持てません。`confirm` と `writeLimit` は見ない（書かないので数える件数が無い）ので、
 `confirm: false`・`writeLimit: 0` のままでかまいません。**「実行を許す人」は見ず、全員に効きます**（例外は `execCond` に `LOGIN_INFO` で書く）。
 
 **一覧画面に出す道**（2026-10-31 に `index_menu` / `index_panel` をやめた）: アクション側は `onList`（種類 record）か
