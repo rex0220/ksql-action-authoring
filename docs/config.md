@@ -66,6 +66,7 @@
 | 既定の文（`text`） | **必須**（各言語が空のときに落ちる先） |
 | 使える式の口 | **`execNgMessage` / `resultMessage` / `inputs[].optionLabelsFormula` の 3 つだけ**。ほかの口に `$m_…` を書くと `message:slot` の error |
 | SQL | `ASSERT` と `EXIT SUCCESS IF` のメッセージだけ。`m_` でない変数をメッセージに書くと error（表示は何も出ないため） |
+| 値の差し込み | 文に **`{@名前}`** と書くと、`ASSERT` / `EXIT` で出すときにその SQL で `DECLARE` した変数の値が入る（例「{@year} 年の受注が多すぎます」）。`SET` の値・配列・共通の文・`DECLARE` していない名前は error（`pMessagePlaceholder`。4 列とも見る）。計算式の口では置き換わらない（`REPLACE` を使う。`sql` の章） |
 | 上限 | 50 件 / 1 つの文は 200 字（4 列とも同じ） |
 | **`m_` は名前としても予約** | パラメーター（`params[].name`）と入力項目（`inputs[].name`）に `m_` 始まりの名前は付けられません（`param:reserved-message` / `input:reserved-message` の error。大文字小文字は区別しません） |
 
@@ -127,8 +128,8 @@ ASSERT (SELECT COUNT(*) FROM LAPP_在庫 WHERE 残数 < 0) = 0, @m_no_stock;
 
 | キー | 既定 | 内容 |
 |---|---|---|
-| `readMax` | 10000 | 読み取りの合計件数（1 コンテキストごと） |
-| `tempTableMax` / `tempTotalMax` | 10000 / 20000 | 一時テーブルの行数 |
+| `readMax` | 10000 | 読み取りの上限件数。**1 回の読み取りごと**（合計ではない。一時テーブルを作る文の元の読み取りにも効く） |
+| `tempTableMax` / `tempTotalMax` | 10000 / 20000 | 一時テーブルの行数。`tempTableMax` は**出来た表 1 つ**の行数（JOIN・UNION で増えた行も数える）、`tempTotalMax` は残っている表の合計 |
 | `timeoutMin` | 60 | 実行タイムアウト（分）。**1 コンテキストごとに計り直します**（一覧は 1 レコード・1 グループ、ループは 1 回）。起動 1 回の合計ではないので、**10 回のループは「制限時間 × 10」まで動けます**（`limits` の「数える単位」） |
 | `apiTimeoutSec` | 60 | API 通信のタイムアウト（秒） |
 | `listBulkMax` | 300 | 一覧の選択の上限（「まとめて 1 回」は min(これ, 200)） |
