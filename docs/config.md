@@ -213,6 +213,13 @@ ASSERT (SELECT COUNT(*) FROM LAPP_在庫 WHERE 残数 < 0) = 0, @m_no_stock;
 | `event_edit` | 保存後（編集。一覧のインライン編集を含む） | record のみ |
 | `event_status` | ステータス変更（遷移が確定した後の詳細画面で実行） | record のみ |
 | `event_delete` | **削除したあと**（削除する前に控えを取り、削除が成功してから実行） | record のみ |
+| `check_create` | **保存前の検査（追加）**。止まったら保存を取り消す（`sql` の「保存前の検査」） | record のみ |
+| `check_edit` | **保存前の検査（編集。一覧のインライン編集を含む）** | record のみ |
+| `check_delete` | **削除前の検査** | record のみ |
+
+**保存前の検査（`check_*`）の行は、ほかの起動と混ぜません**（`detail_menu`・`event_*`・`onList: true` と同じ行にすると `check:mixed` の error）。
+書く文は置けず（`pCheckWrite`）、入力項目・ループも持てません。`confirm` と `writeLimit` は見ない（書かないので数える件数が無い）ので、
+`confirm: false`・`writeLimit: 0` のままでかまいません。**「実行を許す人」は見ず、全員に効きます**（例外は `execCond` に `LOGIN_INFO` で書く）。
 
 **一覧画面に出す道**（2026-10-31 に `index_menu` / `index_panel` をやめた）: アクション側は `onList`（種類 record）か
 種類 `app` で「一覧画面に出る」ことだけを決め、**どの一覧にどう出すか（パネル / メニュー / 出さない）は共通設定の `panel`** で決めます。
