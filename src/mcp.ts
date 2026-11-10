@@ -127,7 +127,9 @@ export function createServer(surface: Surface = "claude-code"): McpServer {
       instructions:
         "kSQL アクションプラグインの設定を作る道具。設定を作る・直す前に kact_status で zip が読めるか確かめ、" +
         "作った設定は kact_check で検査してから利用者に渡す（取り込みと実行は利用者が設定画面で行う）。" +
-        "kintone への書き込みは行わない。",
+        "kintone への書き込みは行わない。" +
+        "作り方を考える前に、その業務を kSQL アクションに任せてよいかを確かめる（kact_docs の navi「任せる範囲を確かめる」）。" +
+        "SQL で書けても任せてよいとは限らない。外れるなら作らずに、理由・ほかの方法・任せられる部分を先に伝える。",
     },
   );
 
