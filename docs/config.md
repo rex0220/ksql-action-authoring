@@ -187,7 +187,7 @@ ASSERT (SELECT COUNT(*) FROM LAPP_在庫 WHERE 残数 < 0) = 0, @m_no_stock;
 | `execCond` / `execNgMessage` | 計算式 | 偽なら実行せずメッセージ |
 | `params` | `[{ name, source, formula }]` | SQL の `DECLARE` と**過不足なく 1 対 1**（下の「パラメーターと入力項目」） |
 | `inputs` | `[{ name, label, type, required, defaultFormula, options, optionsFormula, optionLabelsFormula, minValue, maxValue, minLength, maxLength }]` | 実行時に聞く値。`type` は `text` / `number` / `date` / `datetime` / `select` / `relative_date`。**イベント起動には持てない**（`enabled: false` にした行は数えないので、無効にすればイベント起動にできる。下の「パラメーターと入力項目」） |
-| `sql` | Flow dialect 1 | 1 本 20,000 字・20 文まで（`sql`） |
+| `sql` | Flow dialect 1 | 1 本 20,000 字・50 文・一時テーブル 30 個まで（`sql`） |
 | `staticInsertRows` | 整数 | 素の `INSERT … VALUES` の行数。**保存のときにプラグインが数え直して上書きする**ので、AI は書かなくてよい |
 | `confirm` | 真偽 | 既定 `true`（件数の確認）。`false` にすると `writeLimit` が**必須** |
 | `writeLimit` | 整数（0 = 無し） | 起動 1 回で書いてよい合計件数 |

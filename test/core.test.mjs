@@ -80,7 +80,7 @@ test("checkConfig: 今の形（種類 record ＋ 一覧でも使う ＋ 一覧�
       enabled: true, code: "close", name: "締める", description: "", type: "record", onList: true,
       placements: ["detail_menu"], panelSection: "受注",
       showCond: "", execCond: "", execNgMessage: "", params: [], inputs: [],
-      sql: "-- @ksql dialect: 1\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE $id = @_record;",
+      sql: "-- @ksql dialect: 1\nDECLARE @_record = 0;\nUPDATE LAPP_受注 SET 処理状況 = '済' WHERE $id = @_record;",
       staticInsertRows: 0, confirm: true, writeLimit: 0, refreshPrompt: "auto",
       allowed: [], allowAll: true, resultMessage: "",
       listOnError: "continue", selectionMode: "loop", groupFormula: "", perRecordLock: false, prevRecord: false,
