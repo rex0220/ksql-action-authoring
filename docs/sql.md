@@ -1,4 +1,4 @@
-# SQL の規約（許す文・パラメーター・関数・行ごとの書き戻し・JOIN の読み方）
+# SQL の規約（許す文・パラメーター・関数・行を作る・テーブルの行・書き戻し・JOIN の読み方）
 
 エンジンは **kSQL（`@rex0220/kintone-sql-tools`）の Flow dialect 1**。SQL は**アクションごとに 1 本**。
 
@@ -54,6 +54,40 @@ DECLARE @_selected = [];     -- 配列（「まとめて 1 回」「グループ
 | `_status` / `_prev_status` | 変更後 / 変更前のステータス | `event_status` のみ |
 | `_selected` | 選んだレコードの `$id` の**配列** | 一覧の「まとめて 1 回」「グループごと」（`IN @_selected` でだけ使う） |
 | `_group` | 分ける式の値 | 一覧の「グループごと」のみ |
+
+### 変数を使うときの決まり（入力から別の値を作る・`SET`）
+
+- **`SELECT` の列に変数を書くときは、別名が要ります**（`@key AS キー`。無いと `pParse`「SELECT 列のバッチ変数には AS alias が必要です」）。
+- **入力の値から別の値を作る**（つないだキー・その年の初日と末日など）のは、**SQL の中**でします。
+  計算式のパラメーター（`source: "formula"`）は**入力の値を使えません**（使えるのはレコードの項目・日付・ログイン情報）。
+  1 行だけの一時テーブルに作って、`SET` で変数に取ります。
+
+  ```sql
+  DECLARE @cal = '';    -- 入力
+  DECLARE @year = '';   -- 入力
+  CREATE TEMP TABLE #p AS
+  WITH one AS (GENERATE_SERIES(1, 1) AS n)
+  SELECT CONCAT(@cal, '-', @year) AS キー, CONCAT(@year, '-01-01') AS 初日, CONCAT(@year, '-12-31') AS 末日 FROM one;
+  SET @key = (SELECT キー FROM #p);    -- SET は宣言を兼ねる（DECLARE も params の行も書かない）
+  SET @from = (SELECT 初日 FROM #p);
+  SET @to = (SELECT 末日 FROM #p);
+  ```
+
+  `SET` で取った変数は、読み取りの `WHERE`（`WHERE カレンダー年 = @key`）、書き込む文の `WHERE`（`DELETE … WHERE カレンダー年 = @key`）、
+  `GENERATE_SERIES(@from, @to)` に使えます。**`ASSERT` / `EXIT` の文の `{@名前}` には使えません**（`DECLARE` した変数だけ）。
+- **`SET` で取った値を足し算などに使うときは、数として取ります。** アプリから読んだ数値の項目を `UNION ALL` や `MAX` で 1 つにした値は、
+  そのままだと実行時に `variable @base is not numeric and cannot be used in arithmetic` で止まります（**検査は通ります**）。
+  読むところで `CAST(項目 AS NUMBER)` を通します。
+
+  ```sql
+  -- 前の年の最後の番号（前の年が無ければ 0）
+  CREATE TEMP TABLE #b AS
+  SELECT CAST(通し連番 AS NUMBER) AS 番 FROM LAPP_稼働日 WHERE カレンダー年 = @prev
+  UNION ALL
+  SELECT 0 AS 番 FROM #p;
+  SET @base = (SELECT MAX(番) FROM #b);
+  CREATE TEMP TABLE #z AS SELECT 日付, 年内連番 + @base AS 通し連番 FROM #w;
+  ```
 
 ## 相対日付
 
@@ -218,7 +252,9 @@ ASSERT (SELECT COUNT(*) FROM LAPP_締め管理 WHERE 年月 = @m AND 区分 IN (
 | 空の扱い | `COALESCE(値1, 値2, …)`、`ISNULL(値, 代わり)`、`NULLIF(値1, 値2)`、`GREATEST` / `LEAST(値1, 値2, …)` |
 | 数 | `ROUND` / `FLOOR` / `CEIL` / `TRUNCATE(値 [, 桁])`、`ABS`、`MOD(値, 割る数)`、`POWER`、`SQRT` |
 | 型 | `CAST(値 AS NUMBER)`、`CAST(値 AS TEXT)`（**日付の型はありません**） |
-| 日付 | `YEAR` / `MONTH` / `DAY`、`DATE_FORMAT(日付, '%Y-%m-%d')`、`DATE_ADD(日付, 数, 'DAY')`（`'MONTH'` / `'YEAR'` も）、`DATEDIFF(日付1, 日付2)`、`LAST_DAY(日付)`、as-of 関数（上の章） |
+| 日付 | `YEAR` / `MONTH` / `DAY`、`DAYOFWEEK(日付)`（1 = 日、2 = 月、…、7 = 土）、`DATE_FORMAT(日付, '%Y-%m-%d')`、`DATE_ADD(日付, 数, 'DAY')`（`'MONTH'` / `'YEAR'` も）、`DATEDIFF(日付1, 日付2)`、`LAST_DAY(日付)`、as-of 関数（上の章） |
+| 連番・前後の行 | `ROW_NUMBER() OVER (ORDER BY 列)`、`ROW_NUMBER() OVER (PARTITION BY 列 ORDER BY 列)`、`LEAD(列) OVER (…)`（下の「行を作る・連番を振る」） |
+| 行を作る | `GENERATE_SERIES(開始, 終了 [, 間隔])`（**`WITH` の中だけ**。下の「行を作る・連番を振る」） |
 | 集計 | `COUNT(*)`、`SUM`、`MAX`、`MIN`、`AVG`（`GROUP BY` と一緒に） |
 
 **表に無い名前を当てにいかない。** 無い関数は保存のときに `pParse` で止まります。くわしい引数と例は
@@ -231,7 +267,11 @@ ASSERT (SELECT COUNT(*) FROM LAPP_締め管理 WHERE 年月 = @m AND 区分 IN (
 | 書いたもの | 結果 | 気をつけること |
 |---|---|---|
 | `REGEXP_LIKE('12', '^[0-9]+$')` | 文字の `'1'`（合わなければ `'0'`） | 真偽ではありません。**`CASE WHEN REGEXP_LIKE(…) = '1' THEN`** と比べます（比べないと `pParse`「比較演算子が必要です」） |
-| `TRANSLATE('ＡＢ１２', 'ＡＢ１２', 'AB12')` | `'AB12'` | 1 文字を 1 文字に置き換えます。変換元と変換先の**文字数が違うとエラー**。全角の英数字を半角にするときは、両方の並びをそろえます |
+| `TRANSLATE('ＡＢ１２', 'ＡＢ１２', 'AB12')` | `'AB12'` | 1 文字を 1 文字に置き換えます。変換元と変換先の**文字数が違うとエラー**。全角の英数字を半角にするときは、両方の並びをそろえます。**全角の記号（`－`・`／`）と全角の空白も直すかを、利用者に確かめます**（「全角の英数字を直して」と言われても、コードにハイフンが入っていれば、直さないと突き合いません） |
+| `REPLACE('2026/1/5', '/', '-')` | `'2026-1-5'` | 合うところを**全部**置き換えます |
+| `LEFT('2026-12-31', 4)`・`SUBSTRING('2026-12-31', 6, 2)` | `'2026'`・`'12'` | `SUBSTRING` の開始は 1 から数えます |
+| `REGEXP_SUBSTR('SO-2026-0104', '[0-9]+')` | `'2026'` | 最初に合ったところだけを返します |
+| `DAYOFWEEK('2027-01-01')` | `6`（金曜） | 1 = 日、7 = 土 |
 | `TRIM('  a　')` | `'a'` | 前後の空白は、全角の空白も取ります |
 | `CAST('007' AS NUMBER)` | `7` | `CAST(CAST('007' AS NUMBER) AS TEXT)` で `'7'` |
 | `CAST('abc' AS NUMBER)` | `'abc'`（**そのまま通る**） | 止まりません。**先に `REGEXP_LIKE` で数字の形かを確かめます**。空は `0` になります |
@@ -250,6 +290,70 @@ SELECT rid, 日,
 CREATE TEMP TABLE #v AS
 SELECT rid, 日, CASE WHEN 足した != '' AND 足した = 日 THEN '1' ELSE '0' END AS 実在 FROM #u;
 ```
+
+## 行を作る・連番を振る（`GENERATE_SERIES` と `ROW_NUMBER`）
+
+**レコードが無いところからも、行を作れます。** 連続した日付や数は、`WITH` の中に `GENERATE_SERIES` を書きます
+（「全部の日付」「1 から n まで」のような、どのアプリにも無い行が要るとき）。**kintone は読みません。**
+
+```sql
+-- 1 年の日付を並べる（1 日ずつ）。曜日は DAYOFWEEK（1 = 日、2 = 月、…、7 = 土）
+CREATE TEMP TABLE #d AS
+WITH d AS (GENERATE_SERIES('2027-01-01', '2027-12-31') AS 日付)
+SELECT 日付, DAYOFWEEK(日付) AS 曜日番号, DATE_FORMAT(日付, '%Y-%m') AS 年月 FROM d;
+```
+
+| 決まり | 中身 |
+|---|---|
+| 書ける場所 | **`WITH` の CTE の本体だけ**。`FROM GENERATE_SERIES(…)` や `SELECT` の列には書けません |
+| 引数 | `GENERATE_SERIES(開始, 終了 [, 間隔])`。日付なら間隔は `'1 day'`（省略時）・`'1 month'`・`'1 year'` など、数なら整数。負の間隔で逆順。`'1 month'` の開始は月初（`YYYY-MM-01`）、`'1 year'` の開始は年初（`YYYY-01-01`）にします |
+| 変数 | 開始と終了に変数を書けます（`GENERATE_SERIES(@from, @to)`） |
+| 上限 | 同じ `WITH` の中の合計で 10,000 行まで（後ろに `WHERE` を書いても避けられません）。出来た行は一時テーブルの行数（`limits`）にも数えます |
+| 再帰では作れない | `WITH RECURSIVE` で数を 1 ずつ足す書き方は `pParse` になります（再帰の項にはアプリか先の CTE との結合が要ります） |
+
+**「無い行を見つける」は、並べた行に `LEFT JOIN` して、当たらない行を残します。** 当たらない行は、相手の側の列が**空文字**になります。
+
+```sql
+-- 休みの日（#h。日付ごとに 1 行）に当たらず、土日でもない日に、年の中と月の中の連番を振る
+CREATE TEMP TABLE #x AS
+SELECT d.日付, d.曜日番号, d.年月, h.日付 AS 休日 FROM #d AS d LEFT JOIN #h AS h ON d.日付 = h.日付;
+CREATE TEMP TABLE #w AS
+SELECT 日付, 年月,
+       ROW_NUMBER() OVER (ORDER BY 日付) AS 年内連番,
+       ROW_NUMBER() OVER (PARTITION BY 年月 ORDER BY 日付) AS 月内連番
+  FROM #x
+ WHERE 休日 = '' AND 曜日番号 != 1 AND 曜日番号 != 7;
+```
+
+- **連番**は `ROW_NUMBER() OVER (ORDER BY 列)`。`PARTITION BY 列` を足すと、その列の値ごとに 1 から振り直します。
+- **次の行の値**は `LEAD(列) OVER (PARTITION BY 列 ORDER BY 列)`（期間の「次の開始月」を求めるときなど）。
+- 突き合わせる相手に**同じキーの行が 2 つあると、行が増えます**。先に `GROUP BY` で 1 行にしておきます。
+
+> **「kSQL では無いところから行を作れない」と答えないでください。** 2026-11-12 に、AI が再帰の書き方だけを試して
+> 「日付の並びは作れない。別の道具の仕事」と答え、利用者に `GENERATE_SERIES` を教えられて誤りが分かりました。
+> **「書けない」と言う前に、この章の「関数」と言語リファレンスを機能の名前で探します。**
+
+## テーブル（サブテーブル）の行を読む
+
+レコードの中の**テーブルの行**は、`LAPP_<名前>$<テーブルの項目コード>` で読めます（読むだけ。書くのは `apply` の章の `APPLY`）。
+
+```sql
+DECLARE @key = '';
+-- 「カレンダー年」が @key のレコードの、テーブル Table の行を読む
+CREATE TEMP TABLE #h0 AS
+SELECT date AS 日付, type AS 区分 FROM LAPP_休日$Table WHERE _p.cal_year = @key;
+-- 行の項目で絞る・同じ日付をまとめるのは、読んだ後に一時テーブルで
+CREATE TEMP TABLE #h AS
+SELECT 日付 FROM #h0 WHERE 区分 IN ('祝日', '休日') AND 日付 != '' GROUP BY 日付;
+```
+
+| 決まり | 中身 |
+|---|---|
+| 行の項目 | そのまま項目コードで書きます（`date`・`type`） |
+| レコード（親）の項目 | **`_p.項目コード`**（`_p.cal_year`） |
+| 絞り方 | **`WHERE` を親の項目だけで書くと、当たるレコードだけを読みます。** 行の項目の条件を混ぜる・`WHERE` を書かない、のどちらも**親のレコードを全部**読みます（読み取りの上限に掛かる）。行の条件は、上の例のように読んだ後で絞ります |
+| 行の番号 | `_pid`（親のレコード ID）・`_idx`（行の順。0 から） |
+| 空の行 | テーブルには値の無い行があり得ます。使う列が空の行は `!= ''` で除きます |
 
 ## 行ごとに違う値を書き戻す（`UPDATE … FROM #一時テーブル`）
 
@@ -280,6 +384,8 @@ UPDATE LAPP_取込
 | ソースの重なり | 同じキーの行がソースに 2 つあると、**書く前にエラー**で止まります（どちらを書くか決まらないため）。`GROUP BY` で 1 行にしておきます |
 | `SET` の右辺 | **`別名.列` か固定の値**。関数は書けないので、直した値は一時テーブルの列に作っておきます |
 | 書ける型 | 文字・数値・日付・ドロップダウンなどの **1 つの値**。チェックボックス・複数選択・ユーザー選択・添付ファイル・テーブルは書けません |
+| ソースが 0 行 | 何も書かずに終わります（確認も出ません。止まりません）。`INSERT … SELECT` も同じです。**0 行を誤りにしたいとき**は、先に `ASSERT (SELECT COUNT(*) FROM #r) > 0, '…'` を書きます |
+| 実行計画での見え方 | 自アプリにも `read …: 不明` が出ます。書く行を `$id in (…)` で読み直すためで、全件を読む意味ではありません |
 
 > **行を作り直す形（結果を付けた新しい行を `INSERT` して、古い行を `DELETE`）にしないでください。**
 > レコード番号が押すたびに変わり、元の値・コメント・変更履歴が消えます。途中で止まると新旧の行が両方残ります。
@@ -302,6 +408,10 @@ UPDATE LAPP_取込
   **増えていくアプリ（受注・実績など）は、必ず 1 行目の形で読みます。**
 - **キーは空を除き、`GROUP BY` で重複を除いた一時テーブルにします。** 300 キーを超えないように、
   対象の行数を先に `ASSERT` で数えて止めます（「読む前に件数を数えて止める」）。
+- **キーの項目は、重複禁止でなくても絞って読みます**（受注番号で絞って、明細キーは読んだ後に突き合わせる、でもよい）。
+- **キーの一時テーブルが 0 行なら、相手のアプリは読まず、結果も 0 行**です（止まりません）。
+- **1 つの `SELECT` に `JOIN` を 2 つ以上書けます**（`… LEFT JOIN #a AS a ON … LEFT JOIN #b AS b ON … WHERE …`）。`WHERE` も一緒に書けます。
+  アプリを読む `JOIN` は 1 文に 1 つにしておくと、読み方（キーで絞るか）が文ごとに分かります。
 - **「もうあるか」を、日付の範囲や「直近 1 年」で読んで確かめないでください。**
   範囲の外に同じキーがあると見落として、**二重の登録や上書き**になります。キーで読みます。
 - **`UPSERT` は、既にある行を上書きします。** 「既にあるものには触らず、無いものだけ足す」には使えません。

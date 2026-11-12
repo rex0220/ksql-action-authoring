@@ -1098,3 +1098,79 @@ test("checkConfig: REGEXP_LIKE を比べずに CASE の条件に書くと pParse
   assert.equal(r.status, "invalid");
   assert.deepEqual(r.findings.filter((f) => f.level === "error").map((f) => f.code), ["pParse"], JSON.stringify(r.findings));
 });
+
+// docs/sql.md の「行を作る・連番を振る」「テーブル（サブテーブル）の行を読む」「変数を使うときの決まり」の例（0.14.7）。
+// 2026-11-12 に、AI が「kSQL では日付の並びを作れない」と誤って答えた（GENERATE_SERIES を知らなかった）。
+const docApp2 = (sql, params = [], inputs = []) => {
+  const c = docApp(sql);
+  c.bindings = [{ name: "稼働日", appId: 1001 }, { name: "休日", appId: 1002 }];
+  c.actions[0].params = params;
+  c.actions[0].inputs = inputs;
+  return c;
+};
+const DOC_SERIES = `-- @ksql dialect: 1
+DECLARE @cal = '';
+DECLARE @year = '';
+CREATE TEMP TABLE #p AS
+WITH one AS (GENERATE_SERIES(1, 1) AS n)
+SELECT CONCAT(@cal, '-', @year) AS キー, CONCAT(@year, '-01-01') AS 初日, CONCAT(@year, '-12-31') AS 末日 FROM one;
+SET @key = (SELECT キー FROM #p);
+SET @from = (SELECT 初日 FROM #p);
+SET @to = (SELECT 末日 FROM #p);
+CREATE TEMP TABLE #h0 AS
+SELECT date AS 日付, type AS 区分 FROM LAPP_休日$Table WHERE _p.cal_year = @key;
+CREATE TEMP TABLE #h AS
+SELECT 日付 FROM #h0 WHERE 区分 IN ('祝日', '休日') AND 日付 != '' GROUP BY 日付;
+CREATE TEMP TABLE #d AS
+WITH d AS (GENERATE_SERIES(@from, @to) AS 日付)
+SELECT 日付, DAYOFWEEK(日付) AS 曜日番号, DATE_FORMAT(日付, '%Y-%m') AS 年月 FROM d;
+CREATE TEMP TABLE #x AS
+SELECT d.日付, d.曜日番号, d.年月, h.日付 AS 休日 FROM #d AS d LEFT JOIN #h AS h ON d.日付 = h.日付;
+CREATE TEMP TABLE #w AS
+SELECT 日付, 年月,
+       ROW_NUMBER() OVER (ORDER BY 日付) AS 年内連番,
+       ROW_NUMBER() OVER (PARTITION BY 年月 ORDER BY 日付) AS 月内連番
+  FROM #x
+ WHERE 休日 = '' AND 曜日番号 != 1 AND 曜日番号 != 7;
+CREATE TEMP TABLE #b AS
+SELECT CAST(通し連番 AS NUMBER) AS 番 FROM LAPP_稼働日 WHERE カレンダー年 = @key
+UNION ALL
+SELECT 0 AS 番 FROM #p;
+SET @base = (SELECT MAX(番) FROM #b);
+CREATE TEMP TABLE #z AS SELECT 日付, 年月, 年内連番, 月内連番, 年内連番 + @base AS 通し連番 FROM #w;
+DELETE FROM LAPP_稼働日 WHERE カレンダー年 = @key;
+INSERT INTO LAPP_稼働日 (稼働日キー, カレンダー年, 日付, 年月, 通し連番, 年内連番, 月内連番)
+SELECT CONCAT(@cal, '-', 日付) AS 稼働日キー, @key AS カレンダー年, 日付, 年月, 通し連番, 年内連番, 月内連番 FROM #z;`;
+const DOC_SERIES_IO = [
+  [{ name: "cal", source: "input", formula: "" }, { name: "year", source: "input", formula: "" }],
+  [{ name: "cal", label: "カレンダー名", type: "text", required: true, defaultFormula: "", options: [] }, { name: "year", label: "年", type: "text", required: true, defaultFormula: "", options: [] }],
+];
+
+test("checkConfig: 資料の例（GENERATE_SERIES・テーブルの行・ROW_NUMBER・入力から作る値）は ok", { skip }, async () => {
+  const r = await core.checkConfig(envelope(docApp2(DOC_SERIES, ...DOC_SERIES_IO)), { pluginZip: ZIP });
+  assert.equal(r.status, "ok", JSON.stringify(r.findings));
+  assert.deepEqual(r.findings.filter((f) => f.level === "error"), []);
+});
+
+test("checkConfig: SELECT の列に別名なしで変数を書くと pParse（資料の「変数を使うときの決まり」）", { skip }, async () => {
+  const sql = DOC_SERIES.replace("@key AS カレンダー年", "@key");
+  assert.notEqual(sql, DOC_SERIES);
+  const r = await core.checkConfig(envelope(docApp2(sql, ...DOC_SERIES_IO)), { pluginZip: ZIP });
+  assert.equal(r.status, "invalid");
+  assert.deepEqual(r.findings.filter((f) => f.level === "error").map((f) => f.code), ["pParse"], JSON.stringify(r.findings));
+});
+
+test("checkConfig: 再帰で数の並びを作る書き方は pParse（GENERATE_SERIES を使う）", { skip }, async () => {
+  const sql = `-- @ksql dialect: 1
+CREATE TEMP TABLE #d AS
+WITH RECURSIVE d (日, n) AS (
+  SELECT CAST('2027-01-01' AS TEXT), 1
+  UNION ALL
+  SELECT CAST(DATE_ADD(日, 1, 'DAY') AS TEXT), n + 1 FROM d WHERE n < 31
+)
+SELECT 日, n FROM d;
+UPDATE LAPP_稼働日 SET 年月 = '2027-01' WHERE カレンダー年 = 'X';`;
+  const r = await core.checkConfig(envelope(docApp2(sql)), { pluginZip: ZIP });
+  assert.equal(r.status, "invalid");
+  assert.ok(r.findings.some((f) => f.code === "pParse"), JSON.stringify(r.findings));
+});
