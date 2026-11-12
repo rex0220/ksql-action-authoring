@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "runtimeChecks": {
-    "mcpVersion": "0.14.6",
+    "mcpVersion": "0.14.7",
     "authoringApiVersions": [
       1,
       2,
