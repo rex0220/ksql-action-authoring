@@ -1,4 +1,4 @@
-# SQL の規約（許す文・パラメーターの置ける場所）
+# SQL の規約（許す文・パラメーター・関数・行ごとの書き戻し・JOIN の読み方）
 
 エンジンは **kSQL（`@rex0220/kintone-sql-tools`）の Flow dialect 1**。SQL は**アクションごとに 1 本**。
 
@@ -206,6 +206,138 @@ ASSERT (SELECT COUNT(*) FROM LAPP_締め管理 WHERE 年月 = @m AND 区分 IN (
 - 同じ起動に検査が複数あれば設定の順に流し、最初に止まったところで取り消します。
 - REST API・CSV 読み込みでは動きません（止められません）。
 
+## 関数（`SELECT` の列で使えるもの）
+
+`CREATE TEMP TABLE … AS SELECT` と、`INSERT … SELECT` / `UPSERT … SELECT` の **`SELECT` の列**で使えます。
+**書き込む文の `WHERE` には書けません**（「書くときに間違えやすいところ」）。値を直してから比べたいときは、先に一時テーブルで直します。
+
+| 種類 | 関数 |
+|---|---|
+| 文字 | `TRIM` / `LTRIM` / `RTRIM`、`UPPER` / `LOWER`、`LENGTH`、`SUBSTRING(値, 開始 [, 長さ])`（1 から数える）、`LEFT` / `RIGHT(値, 文字数)`、`INSTR(値, 探す文字)`、`CONCAT(値1, 値2, …)`、`REPLACE(値, 探す文字, 置き換え)`、`LPAD` / `RPAD(値, 長さ [, 埋める文字])`、`TRANSLATE(値, 変換元, 変換先)` |
+| 正規表現 | `REGEXP_LIKE(値, パターン)`、`REGEXP_REPLACE(値, パターン, 置き換え)`、`REGEXP_SUBSTR(値, パターン)`（JavaScript の正規表現） |
+| 空の扱い | `COALESCE(値1, 値2, …)`、`ISNULL(値, 代わり)`、`NULLIF(値1, 値2)`、`GREATEST` / `LEAST(値1, 値2, …)` |
+| 数 | `ROUND` / `FLOOR` / `CEIL` / `TRUNCATE(値 [, 桁])`、`ABS`、`MOD(値, 割る数)`、`POWER`、`SQRT` |
+| 型 | `CAST(値 AS NUMBER)`、`CAST(値 AS TEXT)`（**日付の型はありません**） |
+| 日付 | `YEAR` / `MONTH` / `DAY`、`DATE_FORMAT(日付, '%Y-%m-%d')`、`DATE_ADD(日付, 数, 'DAY')`（`'MONTH'` / `'YEAR'` も）、`DATEDIFF(日付1, 日付2)`、`LAST_DAY(日付)`、as-of 関数（上の章） |
+| 集計 | `COUNT(*)`、`SUM`、`MAX`、`MIN`、`AVG`（`GROUP BY` と一緒に） |
+
+**表に無い名前を当てにいかない。** 無い関数は保存のときに `pParse` で止まります。くわしい引数と例は
+[kSQL 言語リファレンス](https://qiita.com/rex0220/items/e089fddf4229d74be699)の「文字列・数値関数」にあります。
+**`DATE_FORMAT` の書式は、SQL では `'%Y-%m-%d'`、計算式では `"YYYY-MM-DD"`** です（別のエンジンなので書き方が違います）。
+
+**関数の動きを試す道具は、このツールにはありません**（`kact_try` は計算式だけ、`kact_explain` は実行しません）。
+下の表は実物のエンジンで確かめた動きです。表に無い使い方は「実機の少ない行で確かめてください」と利用者に伝えます。
+
+| 書いたもの | 結果 | 気をつけること |
+|---|---|---|
+| `REGEXP_LIKE('12', '^[0-9]+$')` | 文字の `'1'`（合わなければ `'0'`） | 真偽ではありません。**`CASE WHEN REGEXP_LIKE(…) = '1' THEN`** と比べます（比べないと `pParse`「比較演算子が必要です」） |
+| `TRANSLATE('ＡＢ１２', 'ＡＢ１２', 'AB12')` | `'AB12'` | 1 文字を 1 文字に置き換えます。変換元と変換先の**文字数が違うとエラー**。全角の英数字を半角にするときは、両方の並びをそろえます |
+| `TRIM('  a　')` | `'a'` | 前後の空白は、全角の空白も取ります |
+| `CAST('007' AS NUMBER)` | `7` | `CAST(CAST('007' AS NUMBER) AS TEXT)` で `'7'` |
+| `CAST('abc' AS NUMBER)` | `'abc'`（**そのまま通る**） | 止まりません。**先に `REGEXP_LIKE` で数字の形かを確かめます**。空は `0` になります |
+| `DATE_ADD('2026-02-30', 0, 'DAY')` | `2026-03-02`（**繰り上がる**） | 実在しない日付を止めません。`2026-13-01` も `2027-01-01` になります |
+| `DATE_FORMAT('2026-13-01', '%Y-%m-%d')` | `'2026-13-01'`（そのまま） | 実在するかの検査には使えません |
+
+**日付が実在するか**は、形を確かめてから、`DATE_ADD` で 0 日足した値が元と同じかで見分けます。
+
+```sql
+-- 日 = 文字の項目から作った 'YYYY-MM-DD' のつもりの値。実在すれば 実在 = '1'
+CREATE TEMP TABLE #u AS
+SELECT rid, 日,
+       CASE WHEN REGEXP_LIKE(日, '^[0-9]{4}-[0-9]{2}-[0-9]{2}$') = '1'
+            THEN CAST(DATE_ADD(日, 0, 'DAY') AS TEXT) ELSE '' END AS 足した
+  FROM #t;
+CREATE TEMP TABLE #v AS
+SELECT rid, 日, CASE WHEN 足した != '' AND 足した = 日 THEN '1' ELSE '0' END AS 実在 FROM #u;
+```
+
+## 行ごとに違う値を書き戻す（`UPDATE … FROM #一時テーブル`）
+
+**行ごとに違う結果（検査の結果・計算した値）を、読んだ行そのものに書き戻す**ときの形です。
+結果を一時テーブルに作り、**レコード ID（`$id`）で突き合わせて** `UPDATE` します。
+**重複禁止の項目が無いアプリでも書けます**（`UPSERT` と違って、キーの項目は要りません）。
+
+```sql
+-- @ksql dialect: 1
+-- 1. 対象の行を読み、行ごとの結果を一時テーブルに作る（rid = レコード ID）
+CREATE TEMP TABLE #r AS
+SELECT $id AS rid,
+       CASE WHEN TRIM(数量) = '' THEN '誤りあり' ELSE '検査OK' END AS 結果,
+       CASE WHEN TRIM(数量) = '' THEN '数量が空です。' ELSE '' END AS 理由
+  FROM LAPP_取込 WHERE 状態 NOT IN ('登録済み');
+
+-- 2. 一時テーブルの値を、レコード ID で突き合わせて書き戻す
+UPDATE LAPP_取込
+   SET 状態 = r.結果, 誤り内容 = r.理由
+  FROM #r AS r
+ WHERE LAPP_取込.$id = r.rid;
+```
+
+| 決まり | 中身 |
+|---|---|
+| ソース | 一時テーブル（`FROM #名前 AS 別名`）。サブクエリと CTE は書けません |
+| 突き合わせ | **等値 1 つだけ**。`アプリ.$id = 別名.列` か、文字列（1 行）・数値の項目どうし |
+| ソースの重なり | 同じキーの行がソースに 2 つあると、**書く前にエラー**で止まります（どちらを書くか決まらないため）。`GROUP BY` で 1 行にしておきます |
+| `SET` の右辺 | **`別名.列` か固定の値**。関数は書けないので、直した値は一時テーブルの列に作っておきます |
+| 書ける型 | 文字・数値・日付・ドロップダウンなどの **1 つの値**。チェックボックス・複数選択・ユーザー選択・添付ファイル・テーブルは書けません |
+
+> **行を作り直す形（結果を付けた新しい行を `INSERT` して、古い行を `DELETE`）にしないでください。**
+> レコード番号が押すたびに変わり、元の値・コメント・変更履歴が消えます。途中で止まると新旧の行が両方残ります。
+> 「重複禁止の項目が無いから `UPSERT` で書けない」ときに使うのが、この `UPDATE … FROM` です
+> （2026-11-12 の試行で、この形を知らずに行を作り直す設定が出来ました）。
+
+## 別のアプリと突き合わせる（`JOIN` が相手をどう読むか）
+
+「マスタにあるか」「登録先にもうあるか」を見るとき、**書き方で相手のアプリの読み方が変わります**。
+
+| 書き方 | 相手のアプリの読み方 |
+|---|---|
+| **一時テーブルを `FROM` に置いて、アプリへ `INNER JOIN`** | **キーを kintone の `in (…)` に載せて、当たる行だけ読みます**（重複を除いて **300 キーまで**。超えると全件） |
+| 一時テーブルからアプリへ `LEFT JOIN` | **全件**を読みます |
+| `WHERE 項目 IN (SELECT … FROM アプリ)` | **全件**を読みます |
+
+- **`ON` に書ける条件は等値 1 つだけ**です（`ON a = b AND c = d` は `pParse`）。2 つの項目で突き合わせるときは、
+  `CONCAT(a, '/', c)` で 1 つの列にしてから結合します。
+- 全件を読む形は、相手が読み取りの上限（`readMax`。既定 10,000 件）を超えると**止まります**。
+  **増えていくアプリ（受注・実績など）は、必ず 1 行目の形で読みます。**
+- **キーは空を除き、`GROUP BY` で重複を除いた一時テーブルにします。** 300 キーを超えないように、
+  対象の行数を先に `ASSERT` で数えて止めます（「読む前に件数を数えて止める」）。
+- **「もうあるか」を、日付の範囲や「直近 1 年」で読んで確かめないでください。**
+  範囲の外に同じキーがあると見落として、**二重の登録や上書き**になります。キーで読みます。
+- **`UPSERT` は、既にある行を上書きします。** 「既にあるものには触らず、無いものだけ足す」には使えません。
+  下の形（在るキーを読む → 当たらない行だけ `INSERT`）にします。
+- **実行計画には `read …: 不明（上限 maxRecords=10000 と仮定…）` と出ます。** キーの数は実行時に決まるためで、
+  **全件を読むという意味ではありません**（`kintone query: (全件取得)` と出るのは、条件の無い読み取りです）。
+
+```sql
+-- @ksql dialect: 1
+-- 1. 対象の行と、突き合わせるキー（受注番号-行番号）
+CREATE TEMP TABLE #w AS
+SELECT $id AS rid, CONCAT(TRIM(受注番号), '-', TRIM(行番号)) AS キー
+  FROM LAPP_取込 WHERE 状態 NOT IN ('登録済み');
+
+-- 2. 相手のアプリに「在るキー」を、今回のキーで絞って読む（一時テーブルを FROM に置く INNER JOIN）
+CREATE TEMP TABLE #k AS SELECT キー FROM #w WHERE キー != '' GROUP BY キー;
+CREATE TEMP TABLE #o AS
+SELECT o.明細キー FROM #k AS k INNER JOIN LAPP_受注 AS o ON k.キー = o.明細キー;
+
+-- 3. 当たらなかった行（まだ無い行）を、一時テーブルどうしの LEFT JOIN で見分ける（当たらないと相手の列が空）
+CREATE TEMP TABLE #r AS
+SELECT w.rid, w.キー,
+       CASE WHEN o.明細キー != '' THEN '登録済み' ELSE '検査OK' END AS 結果,
+       CASE WHEN o.明細キー != '' THEN '既に受注にあります' ELSE '' END AS 理由
+  FROM #w AS w LEFT JOIN #o AS o ON w.キー = o.明細キー;
+
+-- 4. 行ごとの結果を書き戻す（上の章）
+UPDATE LAPP_取込
+   SET 状態 = r.結果, 処理結果 = r.理由, 明細キー = r.キー
+  FROM #r AS r
+ WHERE LAPP_取込.$id = r.rid;
+```
+
+無い行だけを足すなら、3 の後に `INSERT INTO LAPP_受注 (…) SELECT … FROM #r WHERE 結果 = '検査OK';` を書きます
+（素の `INSERT` なので注意 `KSQL1305` が出ます。在るキーを先に外しているので重なりません。登録先のキーを重複禁止にしておけば、もしものときも kintone が断ります）。
+
 ## 注意（warning。保存は止まらない）
 
 | コード | 意味 | どうするか |
@@ -232,6 +364,12 @@ ASSERT (SELECT COUNT(*) FROM LAPP_締め管理 WHERE 年月 = @m AND 区分 IN (
   「もう対象でない行を消す」は、**0 の行を足して集計し、`件数 = 0` で消す**形にします（`patterns` の「全体再計算」）。
   読み取りの `SELECT`（`CREATE TEMP TABLE … AS SELECT` のソース）には書けますが、**JavaScript 側の判定**になり、
   その取得が `EXACT` から `PREFILTERED` に落ちます（相手のアプリをもう 1 回読む）。
+- **`IN (SELECT …)` も、書き込む文の `WHERE` には書けません**（一時テーブル相手でも）。`UPDATE … WHERE $id IN (SELECT rid FROM #t)` は
+  **検査を通って、実行時に** `temp table references in UPDATE are not supported yet` で止まります。
+  一時テーブルの行に合わせて書くなら **`UPDATE … FROM #t`**（「行ごとに違う値を書き戻す」）、選んだレコードなら `$id IN @_selected` です。
+- **`REGEXP_LIKE` は `'1'` / `'0'` の文字を返します。** `CASE WHEN REGEXP_LIKE(…) THEN` は `pParse`（比較演算子が必要です）。
+  `CASE WHEN REGEXP_LIKE(…) = '1' THEN` と書きます（「関数」の章）。
+- **`UPSERT` は既にある行を上書きします。** 「無いものだけ足す」は「別のアプリと突き合わせる」の形にします。
 - **`WHERE` に関数を書くと実行時に落ちます**（`DmlConvertError`）。`DELETE … WHERE 請求キー = CONCAT(@cust, '-', @m)` は不可で、
   キーは**計算式で組んでパラメーターで渡します**（`WHERE 請求キー = @key`）。**`SELECT` の列に書く `CONCAT()` は問題ありません。**
 - **`FROM (SELECT … UNION ALL …)` の入れ子（導出表）は書けません。** `UNION ALL` は `CREATE TEMP TABLE` に受けます。
@@ -265,6 +403,14 @@ ASSERT (SELECT COUNT(*) FROM LAPP_締め管理 WHERE 年月 = @m AND 区分 IN (
 - 書き込む文の `WHERE` に kintone へ渡せない条件が残っていて**止まる**（`reason=WHERE_RESIDUAL`。`NOT IN (SELECT …)` など）
 - 読む件数の見積もりが大きい（`estimated API consumption` の `read`）
 - 文の順番が思っていたのと違う（集計してから更新のつもりが、更新してから集計になっている）
+
+**見積もりの「不明」は、止まるという意味ではありません。**
+
+- `read …: 不明（上限 maxRecords=10000 と仮定…）` は、**読む件数が実行時に決まる**文に出ます
+  （一時テーブルからの `JOIN`、`IN @配列`）。一時テーブルを `FROM` に置いた `INNER JOIN` は、実行時にキーで絞って読みます
+  （「別のアプリと突き合わせる」）。
+- `write: 不明（上限 dmlMaxRows=100 と仮定…）` は **1 回の通信の件数**の見積もりです。100 件を超える書き込みは
+  **100 件ずつに分けて送ります**（書ける合計を決めるのは `writeLimit`）。
 
 **書き込む SQL は、アクションごとに見てください。** 1 本だけ見て通ったつもりになると、もう 1 本の同じ誤り
 （`WHERE` の関数など）を見落とします。

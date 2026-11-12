@@ -1030,3 +1030,71 @@ test("checkConfig: 設定が大きすぎれば圧縮後の大きさで止める"
   assert.equal(tooLarge.level, "error");
   assert.match(tooLarge.message, /圧縮後/);
 });
+
+// docs/sql.md の「関数」「行ごとに違う値を書き戻す」「別のアプリと突き合わせる」の例（0.14.6）。
+// 2026-11-12 の試行で、この 3 つが資料に無く、行を作り直す設定と、既にある受注を上書きする設定が出来た。
+// 資料の例が実物のエンジンの検査を通ることを固定する。
+const docApp = (sql) => ({
+  configVersion: 1, bindings: [{ name: "取込", appId: 1001 }, { name: "受注", appId: 1002 }],
+  limits: { readMax: 10000, tempTableMax: 10000, tempTotalMax: 20000, timeoutMin: 60, apiTimeoutSec: 60, listBulkMax: 300, applySubtableMax: 500 },
+  timezone: "",
+  panel: { title: "", sections: [], views: [{ viewId: "*", sections: [""], menus: [], open: false }] },
+  actions: [{
+    enabled: true, code: "doc", name: "資料の例", description: "", type: "app", placements: [],
+    showCond: "", execCond: "", execNgMessage: "", params: [], inputs: [],
+    sql, staticInsertRows: 0, confirm: true, writeLimit: 300, allowed: [], resultMessage: "",
+    listOnError: "continue", selectionMode: "loop", groupFormula: "", perRecordLock: false, prevRecord: false,
+  }],
+});
+const DOC_WRITE_BACK = `-- @ksql dialect: 1
+CREATE TEMP TABLE #r AS
+SELECT $id AS rid,
+       CASE WHEN TRIM(数量) = '' THEN '誤りあり' ELSE '検査OK' END AS 結果,
+       CASE WHEN TRIM(数量) = '' THEN '数量が空です。' ELSE '' END AS 理由
+  FROM LAPP_取込 WHERE 状態 NOT IN ('登録済み');
+UPDATE LAPP_取込
+   SET 状態 = r.結果, 誤り内容 = r.理由
+  FROM #r AS r
+ WHERE LAPP_取込.$id = r.rid;`;
+const DOC_KEY_JOIN = `-- @ksql dialect: 1
+CREATE TEMP TABLE #w AS
+SELECT $id AS rid, CONCAT(TRIM(受注番号), '-', TRIM(行番号)) AS キー
+  FROM LAPP_取込 WHERE 状態 NOT IN ('登録済み');
+CREATE TEMP TABLE #k AS SELECT キー FROM #w WHERE キー != '' GROUP BY キー;
+CREATE TEMP TABLE #o AS
+SELECT o.明細キー FROM #k AS k INNER JOIN LAPP_受注 AS o ON k.キー = o.明細キー;
+CREATE TEMP TABLE #r AS
+SELECT w.rid, w.キー,
+       CASE WHEN o.明細キー != '' THEN '登録済み' ELSE '検査OK' END AS 結果,
+       CASE WHEN o.明細キー != '' THEN '既に受注にあります' ELSE '' END AS 理由
+  FROM #w AS w LEFT JOIN #o AS o ON w.キー = o.明細キー;
+UPDATE LAPP_取込
+   SET 状態 = r.結果, 処理結果 = r.理由, 明細キー = r.キー
+  FROM #r AS r
+ WHERE LAPP_取込.$id = r.rid;`;
+const DOC_REAL_DATE = `-- @ksql dialect: 1
+CREATE TEMP TABLE #t AS SELECT $id AS rid, REPLACE(TRIM(納期), '/', '-') AS 日 FROM LAPP_取込 WHERE 状態 NOT IN ('登録済み');
+CREATE TEMP TABLE #u AS
+SELECT rid, 日,
+       CASE WHEN REGEXP_LIKE(日, '^[0-9]{4}-[0-9]{2}-[0-9]{2}$') = '1'
+            THEN CAST(DATE_ADD(日, 0, 'DAY') AS TEXT) ELSE '' END AS 足した
+  FROM #t;
+CREATE TEMP TABLE #v AS
+SELECT rid, 日, CASE WHEN 足した != '' AND 足した = 日 THEN '1' ELSE '0' END AS 実在 FROM #u;
+UPDATE LAPP_取込 SET 処理結果 = v.実在 FROM #v AS v WHERE LAPP_取込.$id = v.rid;`;
+
+test("checkConfig: 資料の例（行ごとの書き戻し・キーで絞る JOIN・実在する日付）は ok", { skip }, async () => {
+  for (const [name, sql] of [["書き戻し", DOC_WRITE_BACK], ["JOIN", DOC_KEY_JOIN], ["日付", DOC_REAL_DATE]]) {
+    const r = await core.checkConfig(envelope(docApp(sql)), { pluginZip: ZIP });
+    assert.equal(r.status, "ok", `${name} / ${JSON.stringify(r.findings)}`);
+    assert.deepEqual(r.findings.filter((f) => f.level === "error"), [], name);
+  }
+});
+
+test("checkConfig: REGEXP_LIKE を比べずに CASE の条件に書くと pParse（資料の「関数」）", { skip }, async () => {
+  const sql = DOC_REAL_DATE.replace("= '1'\n", "\n");
+  assert.notEqual(sql, DOC_REAL_DATE);
+  const r = await core.checkConfig(envelope(docApp(sql)), { pluginZip: ZIP });
+  assert.equal(r.status, "invalid");
+  assert.deepEqual(r.findings.filter((f) => f.level === "error").map((f) => f.code), ["pParse"], JSON.stringify(r.findings));
+});
